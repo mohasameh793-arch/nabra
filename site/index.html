@@ -1,0 +1,650 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nabra · Speak Arabic and English. It types.</title>
+<meta name="description" content="Free, open-source voice typing and meeting notes that run on your own Windows PC. Arabic dialects, English, and both in one sentence.">
+<meta property="og:title" content="Nabra · نبرة">
+<meta property="og:description" content="Free, open-source voice typing and meeting notes that run on your own PC.">
+<meta property="og:image" content="https://raw.githubusercontent.com/mohasameh793-arch/nabra/main/brand/social-preview.png">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&family=IBM+Plex+Sans+Arabic:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --canvas:#F3F2EF; --sheet:#FBFAF8; --card:#FFFFFF; --line:#E4E1DB; --ink:#141413; --muted:#77736C; --soft:#A9A49B;
+  --teal:#1F8A7E; --teal-2:#2BB3A3; --amber:#F5A83D; --rec:#E5484D; --dark:#141413; --on-dark:#F6F4EF;
+  --sans:"Geist","Segoe UI",system-ui,sans-serif; --serif:"Instrument Serif",Georgia,serif; --ar:"IBM Plex Sans Arabic","Segoe UI",Tahoma,sans-serif;
+  --r:22px; --ease:cubic-bezier(.2,.7,.2,1);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--canvas);color:var(--ink);font:16px/1.55 var(--sans);-webkit-font-smoothing:antialiased;overflow-x:hidden}
+[lang=ar],.ar{font-family:var(--ar)}
+a{color:inherit}
+em,.serif{font-family:var(--serif);font-style:italic;font-weight:400}
+.wrap{max-width:1180px;margin:0 auto;padding:0 24px}
+.btn{display:inline-flex;align-items:center;gap:10px;padding:13px 22px;border-radius:999px;background:var(--ink);color:var(--on-dark);text-decoration:none;font-weight:600;font-size:15px;border:0;cursor:pointer;transition:transform .25s var(--ease),box-shadow .25s}
+.btn:hover{transform:translateY(-2px);box-shadow:0 10px 30px -10px rgba(20,20,19,.5)}
+.btn.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
+.btn svg{width:18px;height:18px}
+.eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--teal)}
+h1,h2,h3{margin:0;font-weight:600;letter-spacing:-.03em;line-height:1.02}
+h2{font-size:clamp(38px,5.4vw,68px)}
+h2 em,h1 em{letter-spacing:-.01em}
+.lead{font-size:clamp(17px,1.6vw,20px);color:var(--muted);max-width:560px}
+section{padding:120px 0}
+
+/* header */
+header{position:fixed;inset:14px 0 auto;z-index:50;display:flex;justify-content:center;pointer-events:none}
+.nav{pointer-events:auto;display:flex;align-items:center;gap:6px;padding:8px 8px 8px 18px;border-radius:999px;background:rgba(251,250,248,.72);backdrop-filter:blur(16px) saturate(1.4);-webkit-backdrop-filter:blur(16px) saturate(1.4);border:1px solid rgba(228,225,219,.8);box-shadow:0 8px 30px -18px rgba(0,0,0,.25);transition:transform .4s var(--ease)}
+.nav.hide{transform:translateY(-120%)}
+.brand{display:flex;align-items:center;gap:8px;font-weight:700;font-size:18px;text-decoration:none;margin-right:14px}
+.brand svg{width:38px;height:21px}
+.nav a.link{padding:8px 14px;border-radius:999px;text-decoration:none;font-size:14.5px;color:var(--muted);transition:color .2s,background .2s}
+.nav a.link:hover{color:var(--ink);background:rgba(0,0,0,.04)}
+.nav .btn{padding:10px 18px;font-size:14px;margin-left:6px}
+@media (max-width:820px){.nav a.link{display:none}}
+
+/* mark */
+.mark path{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round}
+.mark circle{fill:var(--teal-2)}
+
+/* hero */
+.hero{padding:170px 0 90px;position:relative;overflow:hidden}
+.hero .glow{position:absolute;inset:-20% -10% auto;height:900px;background:radial-gradient(40% 50% at 70% 30%,rgba(43,179,163,.20),transparent 70%),radial-gradient(30% 40% at 20% 60%,rgba(245,168,61,.14),transparent 70%);pointer-events:none;animation:drift 18s ease-in-out infinite alternate}
+@keyframes drift{to{transform:translate3d(-4%,3%,0) scale(1.08)}}
+.hero-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:56px;align-items:center;position:relative}
+@media (max-width:960px){.hero-grid{grid-template-columns:1fr}}
+.hero h1{font-size:clamp(54px,8.4vw,112px)}
+.hero h1 .ar{display:block;text-align:left;font-size:.42em;font-weight:500;letter-spacing:0;color:var(--muted);margin-top:16px;line-height:1.3}
+.hero .lead{margin:26px 0 34px}
+.hero .ctas{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+.platform{font-size:13px;color:var(--muted);margin-top:18px;display:flex;gap:16px;flex-wrap:wrap}
+.platform span::before{content:"✓ ";color:var(--teal)}
+
+.word{display:inline-block;opacity:0;transform:translateY(.5em) rotate(2deg);filter:blur(8px);animation:wordIn .9s var(--ease) forwards}
+@keyframes wordIn{to{opacity:1;transform:none;filter:none}}
+
+/* demo card */
+.demo{background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:0 40px 80px -40px rgba(20,20,19,.35);overflow:hidden;position:relative}
+.demo-top{display:flex;align-items:center;gap:8px;padding:14px 18px;border-bottom:1px solid var(--line);font-size:13px;color:var(--muted)}
+.dots i{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--line);margin-right:5px}
+.demo-body{padding:22px 22px 26px;display:grid;gap:16px}
+.bubble{border-radius:16px;padding:16px 18px;min-height:96px;font-size:16.5px;line-height:1.65}
+.bubble.raw{background:var(--canvas);color:var(--muted)}
+.bubble.clean{background:#EAF5F3;color:var(--ink);border:1px solid #CFE7E3}
+.label{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--soft);margin-bottom:6px;display:flex;align-items:center;gap:8px}
+.label .live{width:8px;height:8px;border-radius:50%;background:var(--rec);animation:pulse 1.2s infinite}
+@keyframes pulse{50%{opacity:.25}}
+.filler{color:var(--rec);text-decoration:line-through;text-decoration-thickness:2px}
+.caret::after{content:"";display:inline-block;width:2px;height:1.1em;background:var(--teal);vertical-align:-3px;margin-inline-start:2px;animation:blink 1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+
+/* pill */
+.pill{position:absolute;right:-8px;bottom:-24px;display:flex;align-items:center;gap:10px;padding:10px 18px 10px 14px;border-radius:999px 0 0 999px;background:var(--dark);color:var(--on-dark);font-size:13px;box-shadow:0 18px 40px -18px rgba(0,0,0,.6)}
+.hero-art{position:relative;padding-right:30px}
+.bars{display:flex;align-items:center;gap:3px;height:22px}
+.bars i{width:3px;border-radius:3px;background:var(--teal-2);height:30%;animation:bar 1s ease-in-out infinite}
+.bars i:nth-child(2){animation-delay:.1s}.bars i:nth-child(3){animation-delay:.25s}.bars i:nth-child(4){animation-delay:.05s}.bars i:nth-child(5){animation-delay:.3s}.bars i:nth-child(6){animation-delay:.15s}.bars i:nth-child(7){animation-delay:.35s}
+@keyframes bar{50%{height:100%}}
+.kbd{display:inline-block;padding:2px 8px;border-radius:7px;border:1px solid rgba(255,255,255,.25);font:600 12px var(--sans)}
+.kbd.light{border-color:var(--line);background:var(--card);color:var(--ink);box-shadow:0 2px 0 var(--line)}
+
+/* marquee */
+.marquee{padding:34px 0;border-block:1px solid var(--line);overflow:hidden;background:var(--sheet)}
+.marquee p{text-align:center;margin:0 0 18px;font-size:13px;color:var(--muted);letter-spacing:.04em}
+.track{display:flex;gap:64px;width:max-content;animation:scroll 38s linear infinite}
+.marquee:hover .track{animation-play-state:paused}
+.track span{font-size:30px;font-weight:500;white-space:nowrap;color:#3A3834;display:flex;align-items:center;gap:14px}
+.track span b{font:400 34px var(--ar);color:var(--soft)}
+@keyframes scroll{to{transform:translateX(-50%)}}
+
+/* speed */
+.speed{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:56px}
+@media (max-width:820px){.speed{grid-template-columns:1fr}}
+.lane{border-radius:var(--r);padding:28px;min-height:280px;display:flex;flex-direction:column;gap:18px}
+.lane.kb{background:var(--card);border:1px solid var(--line)}
+.lane.nb{background:var(--dark);color:var(--on-dark)}
+.lane-head{display:flex;justify-content:space-between;align-items:baseline}
+.lane-head b{font-size:15px}
+.wpm{font:400 60px/1 var(--serif);font-style:italic}
+.wpm small{font:500 14px var(--sans);font-style:normal;opacity:.6;margin-left:6px}
+.lane .txt{font-size:17px;line-height:1.6;flex:1}
+.lane.kb .txt{color:var(--muted)}
+.progress{height:4px;border-radius:4px;background:rgba(128,128,128,.18);overflow:hidden}
+.progress i{display:block;height:100%;width:0;background:var(--teal-2);border-radius:inherit}
+.lane.kb .progress i{background:var(--soft)}
+
+/* how tabs */
+.how{display:grid;grid-template-columns:.85fr 1.15fr;gap:48px;margin-top:56px;align-items:start}
+@media (max-width:900px){.how{grid-template-columns:1fr}}
+.tabs{display:grid;gap:10px}
+.tab{all:unset;cursor:pointer;display:block;padding:22px 24px;border-radius:18px;border:1px solid transparent;transition:background .3s,border-color .3s}
+.tab h3{font-size:22px;letter-spacing:-.02em;display:flex;align-items:center;gap:12px}
+.tab h3 span{font:400 15px var(--serif);font-style:italic;color:var(--soft)}
+.tab p{margin:8px 0 0;color:var(--muted);max-height:0;overflow:hidden;transition:max-height .5s var(--ease)}
+.tab .bar{height:3px;background:var(--line);border-radius:3px;margin-top:16px;overflow:hidden;display:none}
+.tab .bar i{display:block;height:100%;width:0;background:var(--teal)}
+.tab[aria-selected=true]{background:var(--card);border-color:var(--line)}
+.tab[aria-selected=true] p{max-height:120px}
+.tab[aria-selected=true] .bar{display:block}
+.tab[aria-selected=true] .bar i{animation:fill 7s linear forwards}
+@keyframes fill{to{width:100%}}
+.stage{position:sticky;top:110px;background:var(--card);border:1px solid var(--line);border-radius:var(--r);min-height:420px;padding:28px;overflow:hidden}
+.scene{display:none;animation:sceneIn .6s var(--ease)}
+.scene.on{display:block}
+@keyframes sceneIn{from{opacity:0;transform:translateY(14px)}}
+.mic{width:86px;height:86px;border-radius:50%;margin:30px auto 24px;background:var(--dark);display:grid;place-items:center;position:relative}
+.mic::before,.mic::after{content:"";position:absolute;inset:0;border-radius:50%;border:2px solid var(--teal-2);animation:ring 2s var(--ease) infinite}
+.mic::after{animation-delay:1s}
+@keyframes ring{from{transform:scale(1);opacity:.8}to{transform:scale(1.9);opacity:0}}
+.mic svg{width:34px;height:34px;stroke:var(--on-dark);fill:none;stroke-width:2;stroke-linecap:round}
+.center{text-align:center}
+.app{border:1px solid var(--line);border-radius:14px;overflow:hidden;margin-top:6px}
+.app-bar{display:flex;gap:6px;padding:10px 14px;background:var(--canvas);font-size:12.5px;color:var(--muted);align-items:center}
+.app-bar .tabx{padding:4px 10px;border-radius:8px}
+.app-bar .tabx.on{background:var(--card);color:var(--ink);box-shadow:0 1px 0 var(--line)}
+.app-body{padding:20px;min-height:200px;font-size:16px}
+.app-body .meta{font-size:13px;color:var(--soft);margin-bottom:10px}
+.mono{font-family:ui-monospace,"Cascadia Code",Consolas,monospace;font-size:14px}
+
+/* features grid */
+.grid4{display:grid;grid-template-columns:repeat(2,1fr);gap:18px;margin-top:56px}
+@media (max-width:820px){.grid4{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:30px;overflow:hidden;position:relative;transition:transform .4s var(--ease),box-shadow .4s}
+.card:hover{transform:translateY(-4px);box-shadow:0 30px 60px -40px rgba(0,0,0,.35)}
+.card h3{font-size:26px;letter-spacing:-.02em}
+.card p{color:var(--muted);margin:10px 0 22px}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{padding:7px 13px;border-radius:999px;background:var(--canvas);font-size:14px;border:1px solid var(--line)}
+.chip.ar{font-size:15px}
+.dict{display:grid;gap:8px}
+.dict div{display:flex;justify-content:space-between;align-items:center;padding:11px 14px;border-radius:12px;background:var(--canvas);font-size:15px;opacity:0;transform:translateX(-12px);transition:all .6s var(--ease)}
+.in .dict div{opacity:1;transform:none}
+.dict div:nth-child(2){transition-delay:.12s}.dict div:nth-child(3){transition-delay:.24s}.dict div:nth-child(4){transition-delay:.36s}
+.dict s{color:var(--soft)}
+.dict b{color:var(--teal);font-weight:600}
+.snip{background:var(--canvas);border-radius:14px;padding:14px 16px;font-size:15px}
+.snip+.snip{margin-top:10px}
+.snip .say{color:var(--muted);font-size:13px}
+.seg{display:inline-flex;background:var(--canvas);border-radius:999px;padding:4px;border:1px solid var(--line);margin-bottom:14px}
+.seg button{all:unset;cursor:pointer;padding:7px 14px;border-radius:999px;font-size:14px;color:var(--muted);transition:all .25s}
+.seg button[aria-pressed=true]{background:var(--ink);color:var(--on-dark)}
+.styleout{background:var(--canvas);border-radius:14px;padding:16px 18px;min-height:96px;font-size:16px;transition:opacity .25s}
+
+/* notes */
+.notes{display:grid;grid-template-columns:1fr 1.1fr;gap:56px;align-items:center}
+@media (max-width:900px){.notes{grid-template-columns:1fr}}
+.meet{background:var(--sheet);border:1px solid var(--line);border-radius:var(--r);box-shadow:0 40px 80px -40px rgba(20,20,19,.35);overflow:hidden}
+.meet-h{padding:20px 22px 0}
+.meet-h h3{font-size:22px}
+.meet-h .m{color:var(--muted);font-size:13px;margin-top:4px}
+.live-row{display:flex;align-items:center;gap:10px;margin-top:14px}
+.live-row .dot{width:10px;height:10px;border-radius:50%;background:var(--rec);animation:pulse 1.4s infinite}
+.clock{font-weight:650;font-variant-numeric:tabular-nums;font-size:18px}
+.mtabs{display:flex;gap:18px;padding:0 22px;margin-top:16px;border-bottom:1px solid var(--line);font-size:14px}
+.mtabs span{padding:10px 0;color:var(--muted);border-bottom:2px solid transparent}
+.mtabs span.on{color:var(--ink);border-color:var(--ink);font-weight:600}
+.lines{list-style:none;margin:0;padding:16px 22px 22px;display:grid;gap:10px;min-height:270px}
+.lines li{display:grid;grid-template-columns:44px 1fr;gap:10px;font-size:15px;opacity:0;transform:translateY(10px);transition:all .5s var(--ease)}
+.lines li.show{opacity:1;transform:none}
+.who{font-size:12px;font-weight:700;padding-top:3px}
+.who.they{color:var(--amber)}.who.you{color:var(--teal)}
+.sum{padding:18px 22px 22px;display:none}
+.sum.on{display:block;animation:sceneIn .6s var(--ease)}
+.sum h4{margin:0 0 8px;font-size:12px;letter-spacing:.08em;color:var(--soft)}
+.sum ul{margin:0 0 14px;padding-inline-start:20px}
+
+/* privacy */
+.dark{background:var(--dark);color:var(--on-dark)}
+.dark .lead{color:#A9A49B}
+.dark .eyebrow{color:var(--teal-2)}
+.trio{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:56px}
+@media (max-width:820px){.trio{grid-template-columns:1fr}}
+.tcard{border:1px solid #2A2926;border-radius:var(--r);padding:30px;background:linear-gradient(180deg,#1B1A19,#141413)}
+.tcard .big{font:400 64px/1 var(--serif);font-style:italic;color:var(--teal-2)}
+.tcard h3{font-size:21px;margin:18px 0 8px;letter-spacing:-.01em}
+.tcard p{margin:0;color:#A9A49B}
+.flow{display:flex;align-items:center;justify-content:center;gap:14px;margin-top:56px;flex-wrap:wrap;font-size:14px;color:#A9A49B}
+.flow .n{padding:12px 18px;border:1px solid #2A2926;border-radius:14px;color:var(--on-dark);background:#1B1A19}
+.flow .x{color:var(--rec);text-decoration:line-through}
+.flow .arrow{width:46px;height:2px;background:linear-gradient(90deg,transparent,var(--teal-2),transparent);background-size:200% 100%;animation:flowx 1.6s linear infinite}
+@keyframes flowx{from{background-position:100% 0}to{background-position:-100% 0}}
+
+/* open source */
+.os{display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:center}
+@media (max-width:900px){.os{grid-template-columns:1fr}}
+.term{background:var(--dark);color:#D9D6CF;border-radius:var(--r);padding:22px 24px;font:14px/1.8 ui-monospace,"Cascadia Code",Consolas,monospace;box-shadow:0 40px 80px -40px rgba(20,20,19,.5)}
+.term .p{color:var(--teal-2)}
+.term .c{color:#77736C}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:30px}
+.stat b{display:block;font:400 46px/1 var(--serif);font-style:italic}
+.stat span{font-size:13px;color:var(--muted)}
+
+/* faq */
+.faq{max-width:820px;margin:56px auto 0}
+details{border-bottom:1px solid var(--line)}
+summary{list-style:none;cursor:pointer;padding:24px 4px;font-size:19px;font-weight:500;display:flex;justify-content:space-between;gap:20px;align-items:center}
+summary::-webkit-details-marker{display:none}
+summary::after{content:"+";font:300 28px/1 var(--sans);transition:transform .35s var(--ease);color:var(--muted)}
+details[open] summary::after{transform:rotate(45deg)}
+details .a{padding:0 4px 24px;color:var(--muted);max-width:700px}
+details[open] .a{animation:sceneIn .45s var(--ease)}
+
+/* cta */
+.cta{text-align:center;padding:140px 0;position:relative;overflow:hidden}
+.cta h2{font-size:clamp(44px,7vw,96px)}
+.cta .ar{display:block;font-size:.4em;color:var(--muted);font-weight:500;margin-top:14px;letter-spacing:0}
+.cta .btn{margin-top:34px;padding:16px 28px;font-size:16px}
+.cta .bigmark{width:min(50vw,300px);margin:0 auto 30px;display:block;color:var(--ink)}
+.cta .bigmark path{stroke-dasharray:400;stroke-dashoffset:400;transition:stroke-dashoffset 2.2s var(--ease)}
+.cta .bigmark circle{transform:scale(0);transform-origin:81px 46px;transform-box:view-box;transition:transform .7s 1.8s cubic-bezier(.3,1.6,.4,1)}
+.cta.in .bigmark path{stroke-dashoffset:0}
+.cta.in .bigmark circle{transform:scale(1)}
+
+footer{border-top:1px solid var(--line);padding:56px 0 40px;font-size:14px;color:var(--muted)}
+.foot{display:grid;grid-template-columns:2fr repeat(3,1fr);gap:30px}
+@media (max-width:820px){.foot{grid-template-columns:1fr 1fr}}
+.foot h5{margin:0 0 12px;font-size:13px;color:var(--ink)}
+.foot a{display:block;text-decoration:none;padding:3px 0}
+.foot a:hover{color:var(--ink)}
+.fine{margin-top:40px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px;font-size:13px}
+
+/* reveal */
+.rv{opacity:0;transform:translateY(34px);transition:opacity .9s var(--ease),transform .9s var(--ease)}
+.rv.in{opacity:1;transform:none}
+.rv.d1{transition-delay:.1s}.rv.d2{transition-delay:.2s}.rv.d3{transition-delay:.3s}
+
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
+  .rv,.word{opacity:1;transform:none;filter:none}
+}
+</style>
+</head>
+<body>
+
+<header><nav class="nav" id="nav" aria-label="Main">
+  <a class="brand" href="#top" aria-label="Nabra home"><svg class="mark" viewBox="6 24 116 64" aria-hidden="true"><path d="M14 80 V50 C14 26 48 26 48 50 V58 C48 88 114 88 114 58 V52"/><circle cx="81" cy="46" r="7.5"/></svg>Nabra</a>
+  <a class="link" href="#dictation">Dictation</a>
+  <a class="link" href="#notetaker">Notetaker</a>
+  <a class="link" href="#privacy">Privacy</a>
+  <a class="link" href="#faq">FAQ</a>
+  <a class="link" href="https://github.com/mohasameh793-arch/nabra">GitHub</a>
+  <a class="btn" href="https://github.com/mohasameh793-arch/nabra/releases/latest/download/Nabra-Setup.exe">Download free</a>
+</nav></header>
+
+<main id="top">
+<!-- HERO -->
+<section class="hero">
+  <div class="glow"></div>
+  <div class="wrap hero-grid">
+    <div>
+      <span class="eyebrow">Free · Open source · Runs on your PC</span>
+      <h1 id="headline" style="margin-top:18px"><span class="word">Don’t</span> <span class="word">type.</span><br><em class="word">Just say it.</em><span class="ar" lang="ar" dir="rtl">اتكلّم بلهجتك… ونبرة تكتب.</span></h1>
+      <p class="lead">Hold one key, talk the way you really talk — Arabic, English, or both in one sentence — and polished text appears wherever your cursor is. No translation, no cloud, no account.</p>
+      <div class="ctas">
+        <a class="btn" href="https://github.com/mohasameh793-arch/nabra/releases/latest/download/Nabra-Setup.exe"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 5.5 10 4.5v7H3zm8-1.2L21 3v8.5H11zM3 12.5h7v7l-7-1zm8 0h10V21l-10-1.4z"/></svg>Download for Windows</a>
+        <a class="btn ghost" href="#how">See how it works</a>
+      </div>
+      <div class="platform"><span>Windows 10 &amp; 11</span><span>Works offline</span><span>Updates itself</span></div>
+    </div>
+
+    <div class="hero-art">
+      <div class="demo" aria-label="Example: messy speech becomes clean text">
+        <div class="demo-top"><span class="dots"><i></i><i></i><i></i></span>Hold <span class="kbd light">Right Ctrl</span> and speak</div>
+        <div class="demo-body">
+          <div><div class="label"><span class="live"></span>You said</div><div class="bubble raw" id="raw" dir="auto"></div></div>
+          <div><div class="label">Nabra typed</div><div class="bubble clean" id="clean" dir="auto"></div></div>
+        </div>
+      </div>
+      <div class="pill" aria-hidden="true"><div class="bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><span id="ptime">0:03</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- MARQUEE -->
+<div class="marquee" aria-label="Languages and dialects">
+  <p>Speak the way you actually speak</p>
+  <div class="track" id="track">
+    <span>Egyptian <b lang="ar">مصري</b></span><span>Gulf <b lang="ar">خليجي</b></span><span>Levantine <b lang="ar">شامي</b></span><span>Modern Standard <b lang="ar">فصحى</b></span><span>English</span><span>Arabic + English <b lang="ar">في جملة واحدة</b></span><span>French</span><span>Names &amp; numbers</span>
+  </div>
+</div>
+
+<!-- SPEED -->
+<section id="dictation">
+  <div class="wrap">
+    <div class="rv"><span class="eyebrow">Speed</span></div>
+    <h2 class="rv d1" style="margin-top:14px">Talking is <em>3× faster</em><br>than typing.</h2>
+    <p class="lead rv d2" style="margin-top:20px">Most people type around 40 words a minute and speak around 150. Nabra lets you write at the speed you think.</p>
+    <div class="speed rv d3" id="speed">
+      <div class="lane kb">
+        <div class="lane-head"><b>Keyboard</b><span class="wpm"><span data-count="40">0</span><small>wpm</small></span></div>
+        <div class="txt" id="kbtxt"></div>
+        <div class="progress"><i id="kbbar"></i></div>
+      </div>
+      <div class="lane nb">
+        <div class="lane-head"><b>Nabra</b><span class="wpm"><span data-count="150">0</span><small>wpm</small></span></div>
+        <div class="txt" id="nbtxt"></div>
+        <div class="progress"><i id="nbbar"></i></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- HOW -->
+<section id="how" style="padding-top:20px">
+  <div class="wrap">
+    <div class="rv"><span class="eyebrow">How it works</span></div>
+    <h2 class="rv d1" style="margin-top:14px">Hold a key. Talk.<br><em>Let go.</em></h2>
+    <div class="how">
+      <div class="tabs" role="tablist">
+        <button class="tab" role="tab" aria-selected="true" data-scene="0"><h3><span>01</span>Speak naturally</h3><p>Ramble, pause, switch languages, change your mind mid-sentence. Hold <b>Right Ctrl</b>, or click the mic on the pill for hands-free.</p><div class="bar"><i></i></div></button>
+        <button class="tab" role="tab" aria-selected="false" data-scene="1"><h3><span>02</span>It cleans up</h3><p>Ums, repeats and false starts disappear. Grammar and punctuation are fixed, and your names and terms are spelled your way.</p><div class="bar"><i></i></div></button>
+        <button class="tab" role="tab" aria-selected="false" data-scene="2"><h3><span>03</span>Lands anywhere</h3><p>Email, chat, docs, your code editor — the text is typed right where your cursor is. Nothing to copy or paste.</p><div class="bar"><i></i></div></button>
+      </div>
+      <div class="stage">
+        <div class="scene on">
+          <div class="mic"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></div>
+          <p class="center" style="color:var(--muted);margin:0 0 16px">Listening…</p>
+          <div class="bubble raw" id="s0" dir="auto"></div>
+        </div>
+        <div class="scene">
+          <div class="label">Cleaning up</div>
+          <div class="bubble raw" id="s1" dir="auto" style="font-size:18px"></div>
+          <div class="chips" style="margin-top:16px"><span class="chip">− fillers</span><span class="chip">− repeats</span><span class="chip">✓ punctuation</span><span class="chip">✓ your dictionary</span></div>
+        </div>
+        <div class="scene">
+          <div class="app">
+            <div class="app-bar"><span class="tabx on" data-app="0">Email</span><span class="tabx" data-app="1">Chat</span><span class="tabx" data-app="2">Code</span></div>
+            <div class="app-body"><div class="meta" id="ameta"></div><div id="atext" dir="auto" class="caret"></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- PERSONAL -->
+<section style="padding-top:20px">
+  <div class="wrap">
+    <div class="rv"><span class="eyebrow">Made for you</span></div>
+    <h2 class="rv d1" style="margin-top:14px">It learns how<br><em>you</em> write.</h2>
+    <div class="grid4">
+      <div class="card rv">
+        <h3>Your languages, at once</h3>
+        <p>Pick the languages you speak. Nabra follows you between them — even mid-sentence — and never translates unless you ask.</p>
+        <div class="chips"><span class="chip ar" lang="ar">العربية</span><span class="chip">English</span><span class="chip">Français</span><span class="chip ar" lang="ar">مصري</span><span class="chip ar" lang="ar">خليجي</span><span class="chip ar" lang="ar">شامي</span></div>
+      </div>
+      <div class="card rv d1" id="dictcard">
+        <h3>A dictionary that sticks</h3>
+        <p>Add names, brands and terms once. Nabra spells them right every time after.</p>
+        <div class="dict"><div><s>ناب را</s><b>Nabra</b></div><div><s>كوبرنتيز</s><b>Kubernetes</b></div><div><s>btw</s><b>by the way</b></div><div><s>محمد سامح</s><b>Mohamed Sameh</b></div></div>
+      </div>
+      <div class="card rv">
+        <h3>Snippets</h3>
+        <p>Say a short cue, get the full text: your email, address, a booking link, a long sign-off.</p>
+        <div class="snip"><div class="say">You say “my email”</div>you@example.com</div>
+        <div class="snip"><div class="say">You say “sign off”</div>Thanks a lot — talk soon,<br>Mohamed</div>
+      </div>
+      <div class="card rv d1">
+        <h3>Styles</h3>
+        <p>Same words, the right tone for each app.</p>
+        <div class="seg" role="group" aria-label="Writing style"><button aria-pressed="true" data-style="0">Formal</button><button aria-pressed="false" data-style="1">Casual</button><button aria-pressed="false" data-style="2">Very casual</button></div>
+        <div class="styleout" id="styleout"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- NOTETAKER -->
+<section id="notetaker">
+  <div class="wrap notes">
+    <div>
+      <div class="rv"><span class="eyebrow">Notetaker</span></div>
+      <h2 class="rv d1" style="margin-top:14px">Every meeting,<br><em>written down.</em></h2>
+      <p class="lead rv d2" style="margin-top:20px">Zoom, Meet, Teams, a YouTube video — press <span class="kbd light">Ctrl</span> <span class="kbd light">Alt</span> <span class="kbd light">N</span> and Nabra transcribes the other side as <b>They</b> and you as <b>You</b>. Jot your own thoughts alongside, then get a summary in the language you choose.</p>
+      <p class="rv d3" style="color:var(--muted);font-size:14px;margin-top:18px">No bot joins your call. Audio never leaves your computer.</p>
+    </div>
+    <div class="meet rv d2" id="meet">
+      <div class="meet-h">
+        <h3>Weekly product sync</h3>
+        <div class="m" id="mdate"></div>
+        <div class="live-row"><span class="dot"></span><span class="clock" id="mclock">0:00</span><span style="color:var(--muted);font-size:13px" id="mstate">Recording</span></div>
+      </div>
+      <div class="mtabs"><span>My thoughts</span><span class="on" id="tTr">Transcript</span><span id="tSu">Summary</span></div>
+      <ol class="lines" id="lines">
+        <li><span class="who they">They</span><span dir="auto">طيب يا جماعة، الـ release الجاية امتى؟</span></li>
+        <li><span class="who you">You</span><span dir="auto">I think Thursday works, لو الـ tests عدّت.</span></li>
+        <li><span class="who they">They</span><span dir="auto">Okay. Who's handling the release notes?</span></li>
+        <li><span class="who you">You</span><span dir="auto">أنا هكتبها وهبعتها لكم بكرة الصبح.</span></li>
+        <li><span class="who they">They</span><span dir="auto">تمام، ونأجل الـ dark mode للأسبوع اللي بعده.</span></li>
+      </ol>
+      <div class="sum" id="sum">
+        <h4>OVERVIEW</h4>
+        <ul><li>Release planned for Thursday if tests pass.</li><li>Dark mode moves to the following week.</li></ul>
+        <h4>ACTION ITEMS</h4>
+        <ul><li><b>You</b> — write release notes and send them tomorrow morning.</li></ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- PRIVACY -->
+<section id="privacy" class="dark">
+  <div class="wrap">
+    <div class="rv"><span class="eyebrow">Private by design</span></div>
+    <h2 class="rv d1" style="margin-top:14px">Your voice stays<br><em>on your PC.</em></h2>
+    <p class="lead rv d2" style="margin-top:20px">Speech recognition and AI cleanup run on your own computer. There’s no server to send your voice to — so nobody can read, store, or train on it.</p>
+    <div class="flow rv d2" aria-label="Your voice goes from microphone to your PC to your app, never to the cloud">
+      <span class="n">🎙 Your voice</span><span class="arrow"></span><span class="n">Your PC</span><span class="arrow"></span><span class="n">Your app</span><span style="margin-left:18px" class="x">☁ the cloud</span>
+    </div>
+    <div class="trio">
+      <div class="tcard rv"><div class="big">0</div><h3>Accounts</h3><p>No sign-up, no email, no tracking. Install it and talk.</p></div>
+      <div class="tcard rv d1"><div class="big">100%</div><h3>Offline</h3><p>After the one-time model download, it works without internet.</p></div>
+      <div class="tcard rv d2"><div class="big">MIT</div><h3>Open source</h3><p>Every line is on GitHub. Read it, build it, change it.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- OPEN SOURCE -->
+<section>
+  <div class="wrap os">
+    <div>
+      <div class="rv"><span class="eyebrow">Open source</span></div>
+      <h2 class="rv d1" style="margin-top:14px">Built in the open.<br><em>Free forever.</em></h2>
+      <p class="lead rv d2" style="margin-top:20px">Nabra is MIT-licensed and community-owned. Download the installer, or build it yourself from source. New versions install themselves.</p>
+      <div class="stats rv d3">
+        <div class="stat"><b>2</b><span>languages in one sentence</span></div>
+        <div class="stat"><b>3</b><span>shortcuts to learn</span></div>
+        <div class="stat"><b>$0</b><span>forever</span></div>
+      </div>
+      <div style="margin-top:30px" class="rv d3"><a class="btn ghost" href="https://github.com/mohasameh793-arch/nabra">View on GitHub →</a></div>
+    </div>
+    <div class="term rv d2" aria-label="Build from source">
+      <div><span class="c"># build it yourself</span></div>
+      <div><span class="p">$</span> git clone https://github.com/mohasameh793-arch/nabra</div>
+      <div><span class="p">$</span> cd nabra</div>
+      <div><span class="p">$</span> powershell scripts\setup.ps1</div>
+      <div><span class="p">$</span> cargo tauri dev</div>
+      <div class="c"># hold Right Ctrl and talk ✨</div>
+    </div>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section id="faq" style="padding-top:40px">
+  <div class="wrap">
+    <h2 class="center rv">Questions</h2>
+    <div class="faq">
+      <details class="rv"><summary>Is Nabra really free?</summary><div class="a">Yes. It’s open source under the MIT license — no trial, no subscription, no account.</div></details>
+      <details class="rv"><summary>Does it need the internet?</summary><div class="a">Only once, to download the speech and AI models during setup. After that everything runs offline on your PC.</div></details>
+      <details class="rv"><summary>What do I need to run it?</summary><div class="a">Windows 10 or 11 (64-bit). It runs on any processor; for the fastest dictation and AI cleanup, an NVIDIA GPU with 10&nbsp;GB+ memory is recommended. Setup picks the right models for your PC (about 1.6–10&nbsp;GB).</div></details>
+      <details class="rv"><summary>Which Arabic dialects does it understand?</summary><div class="a">Egyptian, Gulf, Levantine and Modern Standard Arabic — plus English, French and many more. Choose your languages in Settings and switch between them freely, even mid-sentence.</div></details>
+      <details class="rv"><summary>Will it translate what I say?</summary><div class="a">No. Nabra writes exactly the language you spoke. If you want a translation, hold Right Alt and ask for one.</div></details>
+      <details class="rv"><summary>Which apps does it work in?</summary><div class="a">Any app where you can type — email, chat, browsers, Word, your code editor. The text appears where your cursor is.</div></details>
+      <details class="rv"><summary>How does the Notetaker work?</summary><div class="a">Press Ctrl+Alt+N (or the record button on the pill). Nabra transcribes your computer’s audio as “They” and your microphone as “You”, and can summarize the meeting when you’re done. No bot joins your call.</div></details>
+      <details class="rv"><summary>Is it on Mac or phone?</summary><div class="a">Not yet — Nabra is Windows-only for now. Contributions are welcome on GitHub.</div></details>
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section class="cta" id="cta">
+  <div class="wrap">
+    <svg class="bigmark mark" viewBox="6 24 116 64" aria-hidden="true"><path d="M14 80 V50 C14 26 48 26 48 50 V58 C48 88 114 88 114 58 V52"/><circle cx="81" cy="46" r="7.5"/></svg>
+    <h2>You have a way with words.<br><em>Now in two languages.</em><span class="ar" lang="ar" dir="rtl">قولها بطريقتك.</span></h2>
+    <a class="btn" href="https://github.com/mohasameh793-arch/nabra/releases/latest/download/Nabra-Setup.exe">Download Nabra for Windows</a>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot">
+      <div><a class="brand" href="#top" style="padding:0"><svg class="mark" viewBox="6 24 116 64" aria-hidden="true" style="width:38px;height:21px"><path d="M14 80 V50 C14 26 48 26 48 50 V58 C48 88 114 88 114 58 V52"/><circle cx="81" cy="46" r="7.5"/></svg>Nabra <span class="ar" lang="ar" style="color:var(--soft);font-weight:500">نبرة</span></a><p style="max-width:300px">Free, open-source voice typing and meeting notes for Windows.</p></div>
+      <div><h5>Product</h5><a href="#dictation">Dictation</a><a href="#notetaker">Notetaker</a><a href="#privacy">Privacy</a></div>
+      <div><h5>Get started</h5><a href="https://github.com/mohasameh793-arch/nabra/releases/latest/download/Nabra-Setup.exe">Download</a><a href="https://github.com/mohasameh793-arch/nabra#readme">Guide</a><a href="#faq">FAQ</a></div>
+      <div><h5>Project</h5><a href="https://github.com/mohasameh793-arch/nabra">GitHub</a><a href="https://github.com/mohasameh793-arch/nabra/releases">Releases</a><a href="https://github.com/mohasameh793-arch/nabra/issues">Report a bug</a></div>
+    </div>
+    <div class="fine"><span>MIT License · Nabra contributors</span><span>Inspired by Wispr Flow. Not affiliated.</span></div>
+  </div>
+</footer>
+
+<script>
+const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const sleep = ms => new Promise(r => setTimeout(r, reduce ? 0 : ms));
+
+// Headline word stagger
+document.querySelectorAll('#headline .word').forEach((w, i) => w.style.animationDelay = (0.12 + i * 0.12) + 's');
+
+// Hide nav on scroll down, show on scroll up
+let lastY = 0; const nav = document.getElementById('nav');
+addEventListener('scroll', () => { const y = scrollY; nav.classList.toggle('hide', y > lastY && y > 300); lastY = y; }, { passive: true });
+
+// Type text into an element, word by word (works for RTL and mixed text)
+async function type(el, html, perWord = 70) {
+  const tokens = html.split(/(\s+)/); el.innerHTML = '';
+  for (const t of tokens) { el.innerHTML += t; if (t.trim()) await sleep(perWord); }
+}
+
+// HERO: messy speech → clean text, looping
+const heroPairs = [
+  { raw: 'umm so yeah كنت عايز أقول إن الـ meeting بتاعة بكرة uh هتبقى الساعة تلاتة، لا لا قصدي أربعة، and send the deck before',
+    mark: ['umm', 'so', 'yeah', 'uh', 'تلاتة،', 'لا', 'لا', 'قصدي'],
+    clean: 'كنت عايز أقول إن الـ meeting بتاعة بكرة هتبقى الساعة أربعة، and please send the deck before.' },
+  { raw: 'hey team so basically the the launch is moving to Monday instead of uh Friday يعني, and Sara will share the link',
+    mark: ['so', 'basically', 'the', 'uh', 'يعني,'],
+    clean: 'Hey team, the launch is moving to Monday instead of Friday, and Sara will share the link.' },
+  { raw: 'اممم فكرني أكلم أحمد بخصوص الـ invoice يعني بتاعة شهر سبعة وكمان أبعتله الـ PDF',
+    mark: ['اممم', 'يعني'],
+    clean: 'فكّرني أكلّم أحمد بخصوص الـ invoice بتاعة شهر سبعة، وأبعتله الـ PDF.' }
+];
+(async function hero() {
+  const raw = document.getElementById('raw'), clean = document.getElementById('clean'), pt = document.getElementById('ptime');
+  for (let i = 0; ; i = (i + 1) % heroPairs.length) {
+    const p = heroPairs[i]; clean.innerHTML = ''; clean.classList.remove('caret'); raw.classList.add('caret');
+    let s = 0; const t = setInterval(() => pt.textContent = '0:0' + (++s % 10), 1000);
+    await type(raw, p.raw, 95); raw.classList.remove('caret'); clearInterval(t);
+    await sleep(500);
+    const marks = [...p.mark];   // strike the fillers in order
+    raw.innerHTML = p.raw.split(/(\s+)/).map(w => { const k = marks.indexOf(w); if (k === 0) { marks.shift(); return `<span class="filler">${w}</span>`; } return w; }).join('');
+    await sleep(700); clean.classList.add('caret');
+    await type(clean, p.clean, 45);
+    if (reduce) return;   // reduced motion: show one finished example, no loop
+    await sleep(3200);
+  }
+})();
+
+// Reveal on scroll + one-shot triggers
+const once = new Map();
+const io = new IntersectionObserver(es => es.forEach(e => {
+  if (!e.isIntersecting) return;
+  e.target.classList.add('in'); io.unobserve(e.target);
+  const f = once.get(e.target); if (f) f();
+}), { threshold: 0.18, rootMargin: '0px 0px -40px 0px' });
+document.querySelectorAll('.rv, .card, .cta').forEach(el => io.observe(el));
+function onView(id, fn) { const el = document.getElementById(id); once.set(el, fn); io.observe(el); }
+
+// Count-up numbers
+function countUp(el) { const end = +el.dataset.count, t0 = performance.now(), d = reduce ? 1 : 1400;
+  (function f(t) { const k = Math.min(1, (t - t0) / d); el.textContent = Math.round(end * (1 - Math.pow(1 - k, 3))); if (k < 1) requestAnimationFrame(f); })(t0); }
+
+// SPEED race: same sentence, 40 vs 150 wpm
+const race = 'Quick update: the client approved the new design, so we can start building on Monday. Please send me the final files by tomorrow, and let’s book thirty minutes on Thursday to review progress together.';
+onView('speed', () => {
+  document.querySelectorAll('#speed [data-count]').forEach(countUp);
+  const words = race.split(' ');
+  const run = (txt, bar, wpm) => { let i = 0; const ms = 60000 / wpm / 2.2;   // shown 2.2× faster than real time
+    const tick = () => { i++; txt.textContent = words.slice(0, i).join(' '); bar.style.width = (i / words.length * 100) + '%'; if (i < words.length) setTimeout(tick, reduce ? 0 : ms); };
+    tick(); };
+  const loop = () => { run(kbtxt, kbbar, 40); run(nbtxt, nbbar, 150); setTimeout(loop, reduce ? 999999 : 30000); };
+  loop();
+});
+
+// HOW: tabs that auto-advance every 7s
+const tabs = [...document.querySelectorAll('.tab')], scenes = [...document.querySelectorAll('.scene')];
+let cur = 0, timer, runId = 0;
+const sceneFns = [
+  async id => { await type(document.getElementById('s0'), 'so for the presentation tomorrow يعني we need, uh, the numbers from last quarter and and the new logo', 110); },
+  async id => { const el = document.getElementById('s1');
+    el.innerHTML = 'so for the presentation tomorrow <span>يعني</span> we need, <span>uh,</span> the numbers from last quarter <span>and</span> and the new logo';
+    await sleep(800); for (const s of el.querySelectorAll('span')) { if (id !== runId) return; s.className = 'filler'; await sleep(450); }
+    await sleep(700); if (id !== runId) return;
+    el.style.transition = 'opacity .3s'; el.style.opacity = 0; await sleep(300);
+    el.innerHTML = 'For the presentation tomorrow, we need the numbers from last quarter and the new logo.'; el.style.color = 'var(--ink)'; el.style.opacity = 1; },
+  async id => { const apps = [
+      ['To: team@company.com · Subject: Tomorrow', 'Hi all, for the presentation tomorrow we need the numbers from last quarter and the new logo. Thanks!'],
+      ['#design · Message', 'لو حد عنده اللوجو الجديد يبعته هنا 🙏'],
+      ['app.js', '<span class="mono">// TODO: load last quarter’s numbers before rendering the chart</span>']];
+    for (let a = 0; ; a = (a + 1) % 3) { if (id !== runId) return;
+      document.querySelectorAll('.tabx').forEach((t, k) => t.classList.toggle('on', k === a));
+      document.getElementById('ameta').textContent = apps[a][0];
+      const el = document.getElementById('atext');
+      if (a === 2) el.innerHTML = apps[a][1]; else await type(el, apps[a][1], 60);
+      if (reduce) return;
+      await sleep(2000); } }
+];
+function show(i) {
+  cur = i; const id = ++runId;
+  tabs.forEach((t, k) => t.setAttribute('aria-selected', k === i));
+  scenes.forEach((s, k) => s.classList.toggle('on', k === i));
+  document.getElementById('s1').style.color = '';
+  sceneFns[i](id);
+  clearTimeout(timer); if (!reduce) timer = setTimeout(() => show((cur + 1) % tabs.length), 7000);
+}
+tabs.forEach((t, i) => t.addEventListener('click', () => show(i)));
+onView('how', () => show(0));
+
+// STYLES toggle
+const styles = [
+  'Hi Sarah, thank you for the update. I will review the document and send my feedback by Thursday.',
+  'Hey Sarah, thanks for the update! I’ll look at the doc and get back to you by Thursday.',
+  'thanks sarah!! will check the doc and ping u by thurs 👍'];
+const so = document.getElementById('styleout'); so.textContent = styles[0];
+document.querySelectorAll('.seg button').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('.seg button').forEach(x => x.setAttribute('aria-pressed', x === b));
+  so.style.opacity = 0; setTimeout(() => { so.textContent = styles[b.dataset.style]; so.style.opacity = 1; }, 220);
+}));
+
+// NOTETAKER: live lines, then summary
+document.getElementById('mdate').textContent = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }) + ' · Zoom';
+onView('meet', async () => {
+  const clock = document.getElementById('mclock'); let s = 0;
+  const t = setInterval(() => { s++; clock.textContent = Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }, reduce ? 1 : 1000);
+  for (const li of document.querySelectorAll('#lines li')) { await sleep(1500); li.classList.add('show'); }
+  await sleep(2200); clearInterval(t);
+  document.getElementById('mstate').textContent = 'Stopped · summarized';
+  document.querySelector('.live-row .dot').style.cssText = 'animation:none;background:var(--soft)';
+  document.getElementById('lines').style.display = 'none';
+  document.getElementById('tTr').classList.remove('on'); document.getElementById('tSu').classList.add('on');
+  document.getElementById('sum').classList.add('on');
+});
+
+// Seamless marquee: duplicate the items once
+const track = document.getElementById('track'); track.innerHTML += track.innerHTML;
+</script>
+</body>
+</html>
