@@ -29,7 +29,6 @@ export function startLive(meeting, lines = []) {
 
 async function select(id, rerender = true) {
   ui.selected = await call("note", { id });
-  ui.answer = null;
   if (rerender) render();
 }
 
@@ -77,10 +76,6 @@ export function render() {
       h("input", { type: "search", placeholder: "Search notes", value: ui.query, style: "width:200px;padding:6px 10px",
         "aria-label": "Search notes", oninput: (e) => { ui.query = e.target.value; render(); $("#page-notetaker input[type=search]")?.focus(); } })),
     pastNotes(),
-    ui.answer ? h("div", { class: "card answer", dir: "auto" }, ui.answer) : null,
-    h("form", { class: "askbar", onsubmit: ask },
-      h("input", { type: "text", name: "q", placeholder: "Ask about your calls. What did we decide this week?", "aria-label": "Ask about your calls", dir: "auto" }),
-      h("button", { class: "btn soft", type: "submit", disabled: ui.asking, html: ICONS.send }, ui.asking ? "Thinking…" : "Ask")),
   );
   page.replaceChildren(h("div", { class: "notes-layout" }, main, panel()));
 }
@@ -160,20 +155,6 @@ function panel() {
         render();
       } }, "Delete")),
     n.lines.length ? h("details", { class: "full" }, h("summary", {}, `Transcript · ${n.lines.length} lines`), transcript(n.lines)) : null);
-}
-
-async function ask(e) {
-  e.preventDefault();
-  const q = e.target.q.value.trim();
-  if (!q) return;
-  ui.asking = true;
-  render();
-  try {
-    ui.answer = await call("ask_notes", { question: q });
-  } finally {
-    ui.asking = false;
-    render();
-  }
 }
 
 // ---------- live events ----------
