@@ -17,11 +17,10 @@
   --primary: #1f1e1c;
   --primary-fg: #ffffff;
   --shadow: 0 1px 2px rgba(31, 30, 28, 0.06), 0 8px 24px rgba(31, 30, 28, 0.06);
-  --serif: Georgia, "Times New Roman", serif;
+  --serif: Cambria, Georgia, "Times New Roman", serif; /* Cambria: lining digits (Georgia's 0 looks like o) */
   color-scheme: light;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
+:root[data-theme="dark"] {
     --canvas: #121211;
     --sheet: #1a1a19;
     --card: #20201e;
@@ -39,6 +38,28 @@
     --primary-fg: #121211;
     --shadow: none;
     color-scheme: dark;
+  
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="system"] {
+    --canvas: #121211;
+    --sheet: #1a1a19;
+    --card: #20201e;
+    --sunk: #262624;
+    --line: #2e2d2b;
+    --ink: #efede8;
+    --muted: #9b968d;
+    --soft: #6f6b65;
+    --hover: #2a2a27;
+    --accent: #5ac2b4;
+    --accent-2: #3f9b90;
+    --accent-3: #2b6f67;
+    --accent-4: #1f4440;
+    --primary: #efede8;
+    --primary-fg: #121211;
+    --shadow: none;
+    color-scheme: dark;
+  
   }
 }
 

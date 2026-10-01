@@ -52,8 +52,29 @@ function render(v) {
 }
 
 // Hover in → Rust grows the window and shows the buttons; leaving the window shrinks it back.
-$("capsule").addEventListener("mouseenter", () => invoke("pill_hover", { on: true }));
-document.documentElement.addEventListener("mouseleave", () => invoke("pill_hover", { on: false }));
+// Growing the window makes WebView2 fire a spurious "mouseleave", so leaving waits a moment and is
+// cancelled by any movement still inside the pill.
+let hovering = false;
+let leaveTimer = null;
+function enter() {
+  clearTimeout(leaveTimer);
+  if (!hovering) {
+    hovering = true;
+    invoke("pill_hover", { on: true });
+  }
+}
+$("capsule").addEventListener("mouseenter", enter);
+document.addEventListener("mousemove", (e) => {
+  clearTimeout(leaveTimer);
+  if (!hovering && e.target.closest("#capsule")) enter();
+});
+document.documentElement.addEventListener("mouseleave", () => {
+  clearTimeout(leaveTimer);
+  leaveTimer = setTimeout(() => {
+    hovering = false;
+    invoke("pill_hover", { on: false });
+  }, 300);
+});
 
 for (const btn of [$("mic"), $("notes")]) {
   btn.addEventListener("mouseenter", () => $(btn.dataset.tip).classList.add("show"));

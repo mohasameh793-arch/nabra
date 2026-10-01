@@ -123,6 +123,15 @@ export function markdown(md) {
   return html;
 }
 
+// ---------- appearance (a per-PC preference, kept in localStorage) ----------
+export function getTheme() {
+  try { return localStorage.getItem("theme") || "light"; } catch { return "light"; }
+}
+export function setTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  try { localStorage.setItem("theme", theme); } catch { /* storage unavailable: still applied for this session */ }
+}
+
 // ---------- shared state ----------
 export const state = { boot: null, settings: null, history: [], words: [], notifications: [] };
 

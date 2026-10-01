@@ -1,10 +1,12 @@
 // Hub shell: window controls, sidebar navigation, notifications, and wiring backend events to pages.
-import { $, h, call, listen, state, toast } from "./js/core.js";
+import { $, h, call, listen, state, toast, getTheme, setTheme } from "./js/core.js";
 import * as dictation from "./js/dictation.js";
 import * as notetaker from "./js/notetaker.js";
 import * as insights from "./js/insights.js";
 import * as dictionary from "./js/dictionary.js";
 import { openSettings, openHelp } from "./js/settings.js";
+
+setTheme(getTheme());
 
 const PAGES = { dictation, notetaker, insights, dictionary };
 let current = "dictation";

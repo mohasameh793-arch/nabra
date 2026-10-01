@@ -9,6 +9,7 @@
   --warn: #f5b84b;
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; } /* .stop sets display:grid, which would beat the hidden attribute */
 html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
 body {
   font: 13px/1.35 "Segoe UI Variable Text", "Segoe UI", "Noto Sans Arabic", Tahoma, sans-serif;

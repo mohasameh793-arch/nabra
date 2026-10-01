@@ -1,5 +1,5 @@
 // Settings dialog (left nav, sections) and the Help dialog.
-import { $, h, iconBtn, call, state, toast, LANGUAGES, languageName, languageSelect } from "./core.js";
+import { $, h, iconBtn, call, state, toast, LANGUAGES, languageName, languageSelect, getTheme, setTheme } from "./core.js";
 
 const SECTIONS = [["general", "General"], ["languages", "Languages"], ["notes", "Notes"], ["privacy", "Privacy"], ["about", "About"]];
 let section = "general";
@@ -25,8 +25,11 @@ async function body() {
       mic.value = s.microphone ?? "";
       const mode = h("div", { class: "seg" }, [["clean", "Clean"], ["raw", "Raw"]].map(([v, name]) =>
         h("button", { "aria-pressed": String(s.mode === v), onclick: async () => { await save({ mode: v }, `${name} mode`); draw(); } }, name)));
+      const theme = h("div", { class: "seg" }, [["light", "Light"], ["dark", "Dark"], ["system", "Windows"]].map(([v, name]) =>
+        h("button", { "aria-pressed": String(getTheme() === v), onclick: () => { setTheme(v); draw(); } }, name)));
       return [h("h2", {}, "General"),
         field("Your name", "Used for the greeting.", h("input", { type: "text", value: s.name, onchange: (e) => save({ name: e.target.value.trim() }) })),
+        field("Appearance", null, theme),
         field("Dictate", "Hold to talk, release to insert. Or click the mic on the pill for hands-free.", h("span", {}, h("kbd", {}, state.boot.keys.talk))),
         field("Note taking", "Start or stop call notes from anywhere.", h("span", {}, h("kbd", {}, state.boot.keys.notes))),
         field("Microphone", null, mic),
