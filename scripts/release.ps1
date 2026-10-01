@@ -51,7 +51,7 @@ $env:TAURI_SIGNING_PRIVATE_KEY = $key
 $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ""
 powershell -ExecutionPolicy Bypass -File scripts\build-installer.ps1
 if ($LASTEXITCODE) { throw "Installer build failed" }
-Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY, Env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY, Env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD -ErrorAction SilentlyContinue
 if (-not (Test-Path dist\Nabra-Setup.exe.sig)) { throw "No updater signature was produced" }
 
 # 4. latest.json: what every installed Nabra checks.
@@ -79,7 +79,9 @@ $(if ($Notes) { $Notes } else { "Nabra $Version" })
 
 SHA-256 of ``Nabra-Setup.exe``: ``$sha``
 "@
+# Notes go through a file: PowerShell 5.1 splits quoted text when passing it to native programs.
+[IO.File]::WriteAllText("$root\dist\notes.md", $body)
 gh release create "v$Version" dist\Nabra-Setup.exe dist\Nabra-Setup.exe.sha256 dist\latest.json `
-    --repo $Repo --target main --title "Nabra $Version" --notes $body --latest
+    --repo $Repo --target main --title "Nabra $Version" --notes-file dist\notes.md --latest
 Check "gh release create"
 Write-Host "Released v$Version. Installed copies will update within ~6 hours (or via Settings → About → Check for updates)."
