@@ -6,3 +6,6 @@ desktop/gen/
 bench/audio/
 bench/results/
 logs/
+build/
+dist/
+build-installer.log
