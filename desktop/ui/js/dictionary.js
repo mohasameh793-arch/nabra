@@ -3,6 +3,7 @@
 import { $, h, iconBtn, call, state, toast } from "./core.js";
 
 let tab = "all";
+let sort = "recent";
 let query = "";
 let bannerClosed = localStorage.getItem("dict-banner-closed") === "1";
 
@@ -18,6 +19,7 @@ export function render() {
   const shown = state.words
     .filter((w) => tab === "all" || (tab === "words") !== isReplacement(w))
     .filter((w) => !q || label(w).toLowerCase().includes(q) || (w.sounds_like ?? []).some((s) => s.includes(q)));
+  if (sort === "az") shown.sort((a, b) => label(a).localeCompare(label(b)));
   const recent = state.words.filter((w) => !isReplacement(w)).slice(0, 4);
 
   $("#page-dictionary").replaceChildren(h("div", { class: "narrow" },
@@ -27,6 +29,7 @@ export function render() {
       ...[["all", "All"], ["words", "Words"], ["replacements", "Replacements"]].map(([id, name]) =>
         h("button", { role: "tab", "aria-selected": String(tab === id), onclick: () => { tab = id; render(); } }, name)),
       h("span", { class: "grow" }),
+      h("button", { class: "btn ghost", title: "Sort", onclick: () => { sort = sort === "az" ? "recent" : "az"; render(); } }, sort === "az" ? "A–Z" : "Newest"),
       h("input", { type: "search", placeholder: "Search", value: query, style: "width:180px;padding:6px 10px", "aria-label": "Search dictionary",
         oninput: (e) => { query = e.target.value; render(); $("#page-dictionary input[type=search]")?.focus(); } })),
     bannerClosed ? null : h("div", { class: "dict-banner" },
@@ -49,6 +52,10 @@ export function render() {
           })))))
       : h("p", { class: "empty" }, state.words.length ? "Nothing matches." : "Your dictionary is empty. Add a word Nabra keeps getting wrong."),
   ));
+}
+
+export function openWordEditor(word = null) {
+  edit(word);
 }
 
 function edit(word = null) {

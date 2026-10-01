@@ -103,6 +103,15 @@ fn delete_pad(state: State<App>, id: u64) -> Res<Vec<Pad>> {
     state.store.delete_pad(id)
 }
 
+/// The Transforms page's "try it" box (the same AI the Right Alt command uses).
+#[tauri::command]
+async fn transform_text(text: String, instruction: String) -> Res<String> {
+    if text.trim().is_empty() || instruction.trim().is_empty() || text.len() > 20_000 {
+        return Err("Add some text and an instruction".into());
+    }
+    blocking(move || sidecar::transform(&text, &instruction)).await
+}
+
 #[tauri::command]
 fn calendar_events(state: State<App>) -> Vec<calendar::Event> {
     state.calendar.lock().unwrap().clone()
@@ -196,6 +205,16 @@ fn accept_notes_consent(state: State<App>) -> Res<()> {
     Ok(())
 }
 
+/// Start notes named after a calendar event (Notetaker → Today → Take notes).
+#[tauri::command]
+fn start_notes_for(app: AppHandle, state: State<App>, title: String) -> Res<()> {
+    if state.meeting.lock().unwrap().is_some() {
+        return Err("Already taking notes".into());
+    }
+    *state.pending_title.lock().unwrap() = Some((title.chars().take(120).collect(), crate::store::now_ms()));
+    crate::toggle_meeting(&app)
+}
+
 #[tauri::command]
 fn toggle_meeting(app: AppHandle) -> Res<()> {
     crate::toggle_meeting(&app)
@@ -214,6 +233,11 @@ fn copy_text(text: String) -> Res<()> {
 #[tauri::command]
 fn pill_hover(state: State<App>, on: bool) {
     state.tell(Control::Hover(on));
+}
+
+#[tauri::command]
+fn pill_dismiss(state: State<App>) {
+    state.tell(Control::Dismiss);
 }
 
 #[tauri::command]
@@ -255,6 +279,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         pads,
         save_pad,
         delete_pad,
+        transform_text,
         calendar_events,
         connect_calendar,
         refresh_calendar,
@@ -267,10 +292,12 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         ask_notes,
         accept_notes_consent,
         toggle_meeting,
+        start_notes_for,
         live_lines,
         copy_text,
         pill_hover,
         pill_mic,
+        pill_dismiss,
         pill_notes,
         open_hub,
         hide_hub

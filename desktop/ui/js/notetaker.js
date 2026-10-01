@@ -2,6 +2,9 @@
 import { $, h, ICONS, iconBtn, call, copyText, byDay, timeOf, clock, markdown, languageSelect, state, toast, notify, listen } from "./core.js";
 import { openSettings } from "./settings.js";
 
+let events = [];
+let mcpClosed = (() => { try { return localStorage.getItem("mcp-banner-closed") === "1"; } catch { return false; } })();
+
 const ui = {
   cards: [],
   selected: null,   // full note
@@ -15,6 +18,7 @@ const ui = {
 let ticker = null;
 
 export async function load() {
+  events = await call("calendar_events");
   ui.cards = await call("notes");
   if (!ui.selected && ui.cards.length) await select(ui.cards[0].id, false);
 }
@@ -48,6 +52,13 @@ export function render() {
   const main = h("div", { class: "notes-main" },
     h("div", { class: "page-head" }, h("h1", {}, "Notetaker"),
       h("div", { class: "row" }, iconBtn("gear", "Notes settings", () => openSettings("notes")), startBtn)),
+    mcpClosed ? null : h("div", { class: "card mcp-banner" },
+      h("span", { class: "doc", html: ICONS.send }),
+      h("div", { style: "flex:1" }, h("b", {}, "Connect your AI tools to your notes"),
+        h("p", {}, "Let Claude, ChatGPT and other MCP apps search and read your call notes. Read-only and local.")),
+      h("button", { class: "btn ghost", onclick: () => { mcpClosed = true; try { localStorage.setItem("mcp-banner-closed", "1"); } catch {} render(); } }, "Skip"),
+      h("button", { class: "btn", onclick: () => openSettings("connections") }, "Set up")),
+    todayCard(),
     ui.consent ? h("div", { class: "card consent" },
       h("p", {}, "Let everyone on the call know you're transcribing it. Recording rules differ by country. ",
         h("span", { class: "muted" }, "Headphones give the cleanest They / You split.")),
@@ -72,6 +83,28 @@ export function render() {
       h("button", { class: "btn soft", type: "submit", disabled: ui.asking, html: ICONS.send }, ui.asking ? "Thinking…" : "Ask")),
   );
   page.replaceChildren(h("div", { class: "notes-layout" }, main, panel()));
+}
+
+function todayCard() {
+  if (!state.boot.calendar_connected) {
+    return h("div", { class: "today-card" }, h("div", { class: "label" }, "Today"),
+      h("div", { class: "empty-cal", html: '<svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M8.5 3v4M15.5 3v4"/></svg>' },
+        h("span", { style: "font-size:17px" }, "No meetings found"),
+        h("button", { class: "btn primary", onclick: () => openSettings("calendar") }, "Connect calendar")));
+  }
+  const now = Date.now();
+  const end = new Date(); end.setHours(23, 59, 59, 999);
+  const today = events.filter((e) => e.end > now - 3600_000 && e.start <= end.getTime() && !e.all_day);
+  return h("div", { class: "today-card" }, h("div", { class: "label", style: "margin-bottom:6px" }, "Today"),
+    today.length ? today.map((e) => {
+      const live = e.start <= now && e.end > now;
+      return h("div", { class: `meet-row${live ? " now" : ""}` },
+        h("time", {}, live ? "Now" : `${timeOf(e.start)} – ${timeOf(e.end)}`), h("b", { dir: "auto" }, e.title),
+        ui.live ? null : h("button", { class: live ? "btn primary" : "btn soft", onclick: async () => {
+          if (!state.settings.notes_consent) { ui.consent = true; return render(); }
+          await call("start_notes_for", { title: e.title });
+        } }, "Take notes"));
+    }) : h("div", { class: "empty-cal" }, "No more meetings today"));
 }
 
 function pastNotes() {
@@ -184,6 +217,11 @@ export function wire() {
     ui.summarizing = false;
     toast(String(e.payload));
     notify("Notetaker problem", String(e.payload));
+    if (!$("#page-notetaker").hidden) render();
+  });
+  listen("calendar", async () => {
+    events = await call("calendar_events");
+    state.boot.calendar_connected = true;
     if (!$("#page-notetaker").hidden) render();
   });
   listen("consent-needed", () => {

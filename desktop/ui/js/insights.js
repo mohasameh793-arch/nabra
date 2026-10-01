@@ -1,17 +1,22 @@
 // Insights: speed, fixes, totals, app usage and the streak calendar, all from local history.
-import { $, h, fmt, state, dayKey } from "./core.js";
+import { $, h, fmt, state, dayKey, languageName } from "./core.js";
+
+let tab = "usage";
 import { totals, streaks, perDay, byApp, appName } from "./stats.js";
 
 const WEEKS = 18;
 const DAY = 86_400_000;
 
 export function render() {
+  const tabs = h("div", { class: "tabs" }, [["usage", "Your usage"], ["voice", "Your voice"]].map(([id, name]) =>
+    h("button", { "aria-selected": String(tab === id), onclick: () => { tab = id; render(); } }, name)));
+  if (tab === "voice") return voice(tabs);
   const t = totals(state.history);
   const s = streaks(state.history);
   const apps = byApp(state.history);
   $("#page-insights").replaceChildren(
     h("div", { class: "page-head" }, h("h1", {}, "Insights")),
-    h("div", { class: "tabs" }, h("button", { "aria-selected": "true" }, "Your usage")),
+    tabs,
     h("div", { class: "grid-3" },
       h("div", { class: "card metric" }, h("div", { class: "big" }, fmt(t.wpm)), h("div", { class: "label" }, "Words per minute"), gauge(t.wpm)),
       h("div", { class: "card metric" },
@@ -87,4 +92,57 @@ function heatmap() {
     }
   });
   return grid;
+}
+
+// ---------- your voice ----------
+const COLORS = ["var(--accent)", "var(--accent-2)", "#d68c40", "#7a5cc7", "#c2577a", "var(--soft)"];
+const STOP = new Set("that this with have from your they what when then there their will would just like about into been were also than them some more very okay yeah".split(" "));
+
+function voice(tabs) {
+  const h_ = state.history;
+  const langs = new Map();
+  for (const d of h_) langs.set(d.language || "?", (langs.get(d.language || "?") ?? 0) + d.words);
+  const total = [...langs.values()].reduce((a, b) => a + b, 0) || 1;
+  const mix = [...langs.entries()].sort((a, b) => b[1] - a[1]);
+
+  const hours = new Array(24).fill(0);
+  for (const d of h_) hours[new Date(d.id).getHours()] += d.words;
+  const peak = Math.max(1, ...hours);
+
+  const counts = new Map();
+  for (const d of h_) {
+    for (const raw of d.text.toLowerCase().split(/\s+/)) {
+      const w = raw.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}.]+$/gu, "");
+      const arabic = /[\u0600-\u06FF]/.test(w);
+      if ((arabic ? w.length >= 3 : w.length >= 4) && !STOP.has(w)) counts.set(w, (counts.get(w) ?? 0) + 1);
+    }
+  }
+  const top = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 24);
+  const avg = h_.length ? Math.round(h_.reduce((n, d) => n + d.words, 0) / h_.length) : 0;
+  const longest = h_.reduce((m, d) => Math.max(m, d.words), 0);
+
+  if (!h_.length) {
+    return $("#page-insights").replaceChildren(h("div", { class: "page-head" }, h("h1", {}, "Insights")), tabs,
+      h("p", { class: "empty" }, "Dictate a few times and your voice profile appears here."));
+  }
+  $("#page-insights").replaceChildren(
+    h("div", { class: "page-head" }, h("h1", {}, "Insights")), tabs,
+    h("div", { class: "grid-3" },
+      h("div", { class: "card metric" }, h("div", { class: "big" }, fmt(avg)), h("div", { class: "label" }, "Words per dictation")),
+      h("div", { class: "card metric" }, h("div", { class: "big" }, fmt(longest)), h("div", { class: "label" }, "Longest dictation (words)")),
+      h("div", { class: "card metric" }, h("div", { class: "big" }, String(mix.filter(([c]) => c !== "?").length)), h("div", { class: "label" }, "Languages you dictate in"))),
+    h("div", { class: "card metric", style: "margin-bottom:18px" },
+      h("div", { class: "head-row" }, h("h3", {}, "Language mix"), h("span", { class: "label" }, "By words")),
+      h("div", { class: "mix" }, mix.map(([code, n], i) => h("span", { style: `width:${(n / total) * 100}%;background:${COLORS[Math.min(i, COLORS.length - 1)]}` },
+        n / total > 0.08 ? `${Math.round((n / total) * 100)}%` : ""))),
+      h("div", { class: "legend-row" }, mix.map(([code, n], i) => h("span", {}, h("i", { style: `background:${COLORS[Math.min(i, COLORS.length - 1)]}` }),
+        `${code === "?" ? "Unknown" : languageName(code)} · ${fmt(n)} words`))),
+      h("p", { class: "muted", style: "margin:12px 0 0;font-size:13px" }, "Mixed sentences count toward the language they mostly use.")),
+    h("div", { class: "grid-2" },
+      h("div", { class: "card metric" }, h("div", { class: "head-row" }, h("h3", {}, "When you dictate"), h("span", { class: "label" }, "Words by hour")),
+        h("div", { class: "hours" }, hours.map((n, hr) => h("i", { style: `height:${(n / peak) * 100}%`, title: `${hr}:00 · ${n} words` }))),
+        h("div", { class: "hours-axis" }, ["12am", "6am", "12pm", "6pm", "11pm"].map((t) => h("span", {}, t)))),
+      h("div", { class: "card metric" }, h("div", { class: "head-row" }, h("h3", {}, "Words you use most")),
+        h("div", { class: "words-cloud" }, top.map(([w, n]) => h("span", { dir: "auto" }, w, h("small", {}, String(n))))))),
+  );
 }

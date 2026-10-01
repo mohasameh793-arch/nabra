@@ -21,7 +21,15 @@ leaves the PC.
 | **Notetaker** | **Ctrl+Alt+N** (or the pill's record button) records a call: computer audio = **They**, your mic = **You**, live transcript, then an automatic titled **overview** (summary, decisions, action items) in the call's language. |
 | **Ask your notes** | "What did we decide this week?" is answered from your saved call overviews. |
 | **Dictionary** | Your names, products and jargon, with optional Arabic "sounds like" spellings, plus replacements (`btw` → `by the way`). Used from the next dictation, no restart. |
-| **Insights** | Words per minute, fixes made, total words, usage per app, streak calendar. |
+| **Snippets** | Say a trigger ("my email", «توقيعي») and Nabra types the saved text: addresses, links, signatures, whole replies. |
+| **Style** | Formal / Casual / Very casual per kind of app (personal chats, work chats, email, everything else). Only capitals and end punctuation change, never your words. |
+| **Transforms** | Select text anywhere, hold **Right Alt**, say "make it shorter" / «ترجمها للإنجليزي». The selection is replaced. With nothing selected it edits what you just dictated. |
+| **Voice commands** | Hold Right Alt: "scratch that" / «امسحها», "new line", "new paragraph", "undo", "select all". While dictating, "new line" / «سطر جديد» inserts a line break. |
+| **Scratchpad** | Autosaved drafts inside Nabra. Click in and dictate. |
+| **Calendar** | Paste your calendar's private iCal link: today's meetings show in Notetaker, and the pill offers to take notes when one starts (notes are named after the meeting). The link is stored in Windows Credential Manager. |
+| **MCP connection** | A read-only local MCP server lets Claude, ChatGPT desktop, Cursor and others search and read your call notes. Setup command in Settings → Connections. |
+| **Whisper mode** | Quiet speech is boosted before recognition, so you can dictate softly. |
+| **Insights** | Words per minute, fixes made, total words, usage per app, streak calendar, plus **Your voice**: language mix, when you dictate, words you use most. |
 | **Private** | History, notes, dictionary and settings stay in your app-data folder. Call audio is never saved. |
 
 ## How it works
@@ -112,7 +120,13 @@ Measured, not claimed: see [docs/BENCHMARKS.md](docs/BENCHMARKS.md). On 60 synth
 - **Admin windows:** Windows blocks typing into elevated apps from a normal app. Use tray → *Copy last dictation*.
 - **Summaries on an 8B model** sometimes mix up *done* vs *pending* in dialect speech. A larger local model
   or an optional cloud model fixes this; the overview can be rewritten per note.
-- **Hotkeys are fixed** (Right Ctrl, Ctrl+Alt+N) in this version. Don't run another dictation app on the same key.
+- **Hotkeys are fixed** (Right Ctrl, Right Alt, Ctrl+Alt+N) in this version. Don't run another dictation app on the same key.
+  Right Alt used as AltGr (typing é, ü…) is detected and ignored.
+- **Transforms with nothing selected:** some editors (VS Code) copy the whole current line on Ctrl+C, so that line
+  becomes the target. Select text first for precise edits.
+- **Calendar:** daily and weekly repeats are supported; monthly/yearly repeats show their first occurrence only.
+  Times with a named time zone are read as your PC's zone.
+- **Not included (needs a hosted backend):** accounts, the mobile app, and team-shared dictionaries/notes.
 - **No-GPU users:** CPU Whisper is slow. Groq's free hosted Whisper matched local accuracy within ~2 WER
   points in testing and is the planned no-GPU option.
 - **Benchmarks use synthetic voices.** Real-voice numbers come from the opt-in clip collection.
@@ -120,7 +134,7 @@ Measured, not claimed: see [docs/BENCHMARKS.md](docs/BENCHMARKS.md). On 60 synth
 ## Project layout
 
 ```
-engine/    speech · lexicon (+ lexicon_builtin.tsv) · polish · service · selftest
+engine/    speech · lexicon (+ lexicon_builtin.tsv) · shortcuts · polish · service · mcp_notes · selftest
 desktop/   src/ (Rust) · ui/ (pill + hub: HTML/CSS/JS modules) · icons/ · tauri.conf.json
 bench/     score · voices · run · sentences.jsonl
 scripts/   setup.ps1

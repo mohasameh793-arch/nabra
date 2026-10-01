@@ -4,11 +4,15 @@ import * as dictation from "./js/dictation.js";
 import * as notetaker from "./js/notetaker.js";
 import * as insights from "./js/insights.js";
 import * as dictionary from "./js/dictionary.js";
+import * as snippets from "./js/snippets.js";
+import * as style from "./js/style.js";
+import * as transforms from "./js/transforms.js";
+import * as scratchpad from "./js/scratchpad.js";
 import { openSettings, openHelp } from "./js/settings.js";
 
 setTheme(getTheme());
 
-const PAGES = { dictation, notetaker, insights, dictionary };
+const PAGES = { dictation, notetaker, insights, dictionary, snippets, style, transforms, scratchpad };
 let current = "dictation";
 
 export function go(page) {
@@ -62,7 +66,7 @@ notetaker.wire();
 (async () => {
   state.boot = await call("boot");
   state.settings = state.boot.settings;
-  [state.history] = await Promise.all([call("history"), dictionary.load(), notetaker.load()]);
+  [state.history] = await Promise.all([call("history"), dictionary.load(), notetaker.load(), snippets.load(), scratchpad.load()]);
   if (state.boot.meeting) {
     notetaker.startLive(state.boot.meeting, await call("live_lines"));
     $("#nav-live").hidden = false;

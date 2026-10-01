@@ -27,6 +27,8 @@ pub enum Control {
     Hover(bool),
     /// A calendar meeting is starting: offer to take notes.
     MeetingStarting(String),
+    /// The user closed a result or meeting prompt on the pill.
+    Dismiss,
     /// Something outside changed (e.g. notes started from the hub): re-render the pill.
     Refresh,
 }
@@ -328,6 +330,10 @@ impl Controller {
                         }
                         self.rest();
                     }
+                }
+                Ok(Control::Dismiss) => {
+                    self.hold_until = None;
+                    self.rest();
                 }
                 Ok(Control::Refresh) => {
                     if self.take.is_none() {

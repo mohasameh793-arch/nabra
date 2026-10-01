@@ -97,3 +97,12 @@ body[data-view="listening"] .msg, body[data-view="notes"] .msg { color: var(--mu
 @keyframes pulse { 50% { opacity: 0.35; } }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* meeting prompt + command mode */
+body[data-view="meeting"] .dot { background: var(--rec); }
+body[data-view="listening"].command .levels i { background: var(--ok); }
+.take { border: 0; border-radius: 999px; padding: 6px 12px; font: 600 12.5px "Segoe UI", sans-serif; cursor: pointer;
+  background: var(--fg); color: var(--ink); white-space: nowrap; flex: none; }
+.take:hover { background: #fff; }
+.dismiss { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 13px; padding: 4px; flex: none; }
+.dismiss:hover { color: var(--fg); }

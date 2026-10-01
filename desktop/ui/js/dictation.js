@@ -2,6 +2,7 @@
 import { $, h, ICONS, iconBtn, call, copyText, byDay, timeOf, fmt, state, toast } from "./core.js";
 import { totals, streaks, appName } from "./stats.js";
 import { go } from "../hub.js";
+import { openWordEditor } from "./dictionary.js";
 
 let query = "";
 let searching = false;
@@ -77,7 +78,8 @@ function row(d) {
   return h("div", { class: `row-item${d.flagged ? " flagged" : ""}` },
     h("div", {}, h("time", {}, timeOf(d.id)), d.app ? h("div", { class: "app" }, appName(d.app)) : null),
     h("div", { class: "text", dir: "auto" }, d.text),
-    h("div", { class: "actions" }, iconBtn("copy", "Copy", () => copyText(d.text)), flag, remove));
+    h("div", { class: "actions" }, iconBtn("copy", "Copy", () => copyText(d.text)),
+      iconBtn("edit", "A word came out wrong? Add it to the dictionary", () => openWordEditor()), flag, remove));
 }
 
 export function added(entry) {
