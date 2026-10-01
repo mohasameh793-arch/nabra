@@ -34,6 +34,7 @@ restores = {
     "باستخدام next.js": "باستخدام Next.js",
     "بالرياكت وأربطها": "بالـ React وأربطها",      # exact form beats fuzzy "pull request"
     "deploy للـ app": "deploy للـ app",             # Latin span never swallows the Arabic article
+    "أكتب ببيثون": "أكتب بـ Python",               # one-letter preposition, exact spelling
 }
 for src, want in restores.items():
     assert (got := lex.restore(src)) == want, f"{src!r} → {got!r}, want {want!r}"
@@ -49,6 +50,12 @@ with tempfile.TemporaryDirectory() as d:
     lex_user = Lexicon(Path(__file__).with_name("lexicon_builtin.tsv"), user)
     assert lex_user.restore("كلم ماجستي") == "كلم Majesty"
     assert lex_user.prompt_terms()[0] == "Majesty"
+    assert lex_user.restore_counted("كلم ماجستي عن دوكر") == ("كلم Majesty عن Docker", 1, 1)
+    user.write_text(json.dumps([{"from": "btw", "to": "by the way"}]), encoding="utf-8")
+    import os, time  # noqa: E401  (bump mtime so the reload is seen on fast filesystems)
+    os.utime(user, (time.time() + 5, time.time() + 5))
+    assert lex_user.replace("BTW it works, btw.") == ("by the way it works, by the way.", 2)
+    assert lex_user.replace("btwx stays") == ("btwx stays", 0)  # whole words only
 
 # the guard
 assert check_edit("وبعدها أضيف انستول", "وبعدها أضيف install") is None

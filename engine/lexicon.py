@@ -30,6 +30,7 @@ _SPELLED = dict(zip("abcdefghijklmnopqrstuvwxyz",
                     ["", "b", "s", "t", "", "f", "k", "ts", "", "k", "k", "l", "m", "n", "", "b", "k", "r", "s", "t",
                      "", "f", "tbl", "ks", "", "st"]))
 _ARTICLES = ("وبال", "وال", "بال", "فال", "كال", "لل", "ال")  # longest first
+_PREPOSITIONS = ("و", "ب", "ل", "ف", "ك")
 MIN_FUZZY_KEY = 4
 
 
@@ -76,22 +77,44 @@ def load_builtin(path: Path) -> list[Entry]:
 
 
 class Lexicon:
+    """Built-in terms + the user's dictionary file, which the app writes as a JSON list of
+    {"term": "Majesty", "sounds_like": ["ماجستي"]}  or  {"from": "btw", "to": "by the way"}."""
+
     def __init__(self, builtin: Path, user: Path | None = None):
         self.builtin = load_builtin(builtin)
         self.user_path = user
         self._user: list[Entry] = []
+        self._replacements: list[tuple[re.Pattern, str]] = []
         self._user_mtime = None
+
+    def _reload_user(self) -> None:
+        if not (self.user_path and self.user_path.exists()):
+            return
+        mtime = self.user_path.stat().st_mtime
+        if mtime == self._user_mtime:
+            return
+        data = json.loads(self.user_path.read_text(encoding="utf-8") or "[]")
+        self._user = [Entry.make(d["term"], d.get("sounds_like", [])) for d in data if d.get("term")]
+        self._replacements = [
+            (re.compile(rf"(?<!\w){re.escape(d['from'])}(?!\w)", re.IGNORECASE), d["to"])
+            for d in data if d.get("from") and d.get("to")
+        ]
+        self._user_mtime = mtime
 
     @property
     def entries(self) -> list[Entry]:
         """User dictionary first (it wins ties), reloaded whenever the app saves it."""
-        if self.user_path and self.user_path.exists():
-            mtime = self.user_path.stat().st_mtime
-            if mtime != self._user_mtime:
-                data = json.loads(self.user_path.read_text(encoding="utf-8") or "[]")
-                self._user = [Entry.make(d["term"], d.get("sounds_like", [])) for d in data if d.get("term")]
-                self._user_mtime = mtime
+        self._reload_user()
         return self._user + self.builtin
+
+    def replace(self, text: str) -> tuple[str, int]:
+        """Apply the user's text replacements (btw → by the way). Returns (text, how many fired)."""
+        self._reload_user()
+        hits = 0
+        for pattern, to in self._replacements:
+            text, n = pattern.subn(to, text)
+            hits += n
+        return text, hits
 
     def prompt_terms(self, limit: int = 30) -> list[str]:
         return [e.term for e in self.entries[:limit]]
@@ -120,15 +143,31 @@ class Lexicon:
         return best
 
     def _lookup(self, span: str) -> tuple[Entry, str] | None:
-        candidates = [(span, "")] + [(span[len(a):], a + "ـ ") for a in _ARTICLES
-                                     if span.startswith(a) and len(span) > len(a) + 1]
-        for matcher in (self._exact, self._fuzzy):
-            for text, prefix in candidates:
+        def strip(prefixes):
+            return [(span[len(p):], p + "ـ ") for p in prefixes if span.startswith(p) and len(span) > len(p) + 1]
+
+        candidates = [(span, "")] + strip(_ARTICLES)
+        # One-letter prepositions (ببيثون = بـ Python) are only trusted for exact spellings; fuzzy
+        # matching with them stripped would chew through ordinary words starting with و/ب/ل.
+        passes = [(self._exact, candidates + strip(_PREPOSITIONS)), (self._fuzzy, candidates)]
+        for matcher, cands in passes:
+            for text, prefix in cands:
                 if (e := matcher(text)) is not None:
                     return e, prefix
         return None
 
     def restore(self, text: str, max_span: int = 4) -> str:
+        return self.restore_counted(text, max_span)[0]
+
+    def restore_counted(self, text: str, max_span: int = 4) -> tuple[str, int, int]:
+        """Returns (text, built-in term fixes, personal dictionary fixes). Casing-only fixes don't count."""
+        self._reload_user()
+        user_terms = {e.term for e in self._user}
+        fixes = {"builtin": 0, "user": 0}
+
+        def count(entry: Entry) -> None:
+            fixes["user" if entry.term in user_terms else "builtin"] += 1
+
         tokens, out, i = text.split(), [], 0
         while i < len(tokens):
             for n in range(min(max_span, len(tokens) - i), 0, -1):
@@ -148,10 +187,11 @@ class Lexicon:
                 found = self._lookup(span)
                 if found:
                     entry, prefix = found
+                    count(entry)
                     out.append(prefix + entry.term + tail)
                     i += n
                     break
             else:
                 out.append(tokens[i])
                 i += 1
-        return " ".join(out)
+        return " ".join(out), fixes["builtin"], fixes["user"]

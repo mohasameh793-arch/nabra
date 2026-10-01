@@ -3,7 +3,8 @@
 GET  /health                                → {"device": "cuda", "llm": true}
 POST /dictate?langs=ar,en&mode=clean|raw    WAV body → {"text", "raw", "language", "ms"}
 POST /note?langs=ar,en                      WAV body → {"text", "language"}      (calls: no LLM, never stored)
-POST /summary   {"lines": [...], "language": "ar"|null}  → {"summary"}
+POST /summary   {"lines": [...], "language": "ar"|null}  → {"summary", "title"}
+POST /ask       {"question", "notes": [{"title", "date", "summary"}]} → {"answer"}
 
 Transcripts are never written to logs.
 """
@@ -18,7 +19,7 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 
 from lexicon import Lexicon
-from polish import Llm, check_edit
+from polish import Llm, changed_words, check_edit
 from speech import Transcriber
 
 log = logging.getLogger("nabra.service")
@@ -37,19 +38,23 @@ class Engine:
         vocab = self.lexicon.prompt_terms()
         with self.gpu:
             raw, language = self.speech.transcribe(wav, langs, vocab)
-        text = raw
+        text, fixes = raw, {"terms": 0, "dictionary": 0, "ai": 0}
         if raw and mode != "raw":
-            text = self.lexicon.restore(raw)
+            text, fixes["terms"], fixes["dictionary"] = self.lexicon.restore_counted(raw)
             if self.llm:
                 try:
                     cleaned = self.llm.cleanup(text, vocab)
                     if (reason := check_edit(text, cleaned)) is None:
+                        fixes["ai"] = changed_words(text, cleaned)
                         text = cleaned
                     else:
                         log.info("cleanup rejected: %s", reason.split(" [")[0])  # reason only, no words
                 except httpx.HTTPError as err:
                     log.warning("LLM unavailable (%s); using lexicon output", type(err).__name__)
-        result = {"text": text, "raw": raw, "language": language, "ms": round((time.perf_counter() - t0) * 1000)}
+            text, replaced = self.lexicon.replace(text)
+            fixes["dictionary"] += replaced
+        result = {"text": text, "raw": raw, "language": language, "fixes": fixes,
+                  "ms": round((time.perf_counter() - t0) * 1000)}
         if self.keep_clips and text:
             self._keep(wav, result)
         return result
@@ -59,10 +64,16 @@ class Engine:
             raw, language = self.speech.transcribe(wav, langs, self.lexicon.prompt_terms())
         return {"text": self.lexicon.restore(raw) if raw else "", "language": language}
 
-    def summary(self, lines: list[dict], language: str | None) -> str:
+    def summary(self, lines: list[dict], language: str | None) -> dict:
         if not self.llm:
             raise RuntimeError("local AI model is not available")
-        return self.llm.summarize(lines, language)
+        text = self.llm.summarize(lines, language)
+        return {"summary": text, "title": self.llm.title(text) if text else ""}
+
+    def ask(self, question: str, notes: list[dict]) -> str:
+        if not self.llm:
+            raise RuntimeError("local AI model is not available")
+        return self.llm.ask(question, notes) or "There are no summarized calls to search yet."
 
     def _keep(self, wav: bytes, result: dict) -> None:
         """Opt-in (--keep-clips): your own dictations become benchmark clips to review later."""
@@ -102,7 +113,10 @@ def handler_for(engine: Engine):
                     self.reply(200, engine.note(body, langs))
                 elif url.path == "/summary":
                     req = json.loads(body)
-                    self.reply(200, {"summary": engine.summary(req["lines"], req.get("language"))})
+                    self.reply(200, engine.summary(req["lines"], req.get("language")))
+                elif url.path == "/ask":
+                    req = json.loads(body)
+                    self.reply(200, {"answer": engine.ask(req["question"], req.get("notes", []))})
                 else:
                     self.reply(404, {"error": "not found"})
             except RuntimeError as err:

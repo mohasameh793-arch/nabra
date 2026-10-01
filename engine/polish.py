@@ -3,7 +3,7 @@ import re
 
 import httpx
 
-from textnorm import fold, is_arabic, is_latin
+from textnorm import fold, is_arabic, is_latin, levenshtein
 
 CLEANUP_RULES = """You fix dictated text. The speaker mixes Arabic (any dialect) with English and other languages.
 - Never translate. Every word stays in the language it was spoken in, dialect words included (أبغى، عايز، بدي، وش).
@@ -24,7 +24,11 @@ CLEANUP_EXAMPLES = [
 SUMMARY_RULES = """You summarize a call transcript. Lines start with THEM (other people) or ME (the user).
 Write everything in {language}; keep technical terms, products, and names exactly as spoken.
 Only use what is in the transcript. Never invent names, dates, or numbers.
-Separate what is DONE from what is still PENDING ("باقي", "لسه", "still", "not yet").
+Separate what is DONE from what is still PENDING. Pending markers include "باقي", "لسه", "still", "not yet",
+and future forms: Gulf/Levantine "بـ" + verb (بضيف = I will add), "راح"/"رح", "ح"/"هـ" (Egyptian), "سـ"/"سوف",
+"I'll", "will", "going to". Only mark something done when the speaker says it is finished (خلصت، سويت، done).
+In action items write the user as "I"/"أنا" (in the summary language) and others as "they"/"هم",
+never the labels ME or THEM.
 Use Markdown with these sections, headings translated into {language}, skipping empty ones:
 ## Summary
 (two or three sentences)
@@ -92,6 +96,30 @@ class Llm:
         partials = [ask(f"Part {i + 1} of {len(parts)} of one call:\n{p}") for i, p in enumerate(parts)]
         return ask("Merge these summaries of consecutive parts of one call into one summary:\n\n" + "\n\n".join(partials))
 
+    def title(self, summary: str) -> str:
+        """A short title for a note, in the summary's own language."""
+        lang = LANGUAGE_NAMES.get(main_language(summary.splitlines()), "English")
+        text = self.chat([
+            {"role": "system", "content": f"Write a 2–6 word title for this call in {lang}. "
+                                          "Reply with the title only, no quotes or punctuation at the end."},
+            {"role": "user", "content": summary[:3000]},
+        ], max_tokens=30)
+        return text.strip().strip('"«»').splitlines()[0][:80] if text.strip() else ""
+
+    def ask(self, question: str, notes: list[dict]) -> str:
+        """Answer a question from the user's own saved call summaries (newest first)."""
+        context = "\n\n".join(f"### {n.get('title') or 'Call'} ({n.get('date', '')})\n{n.get('summary', '')}"
+                              for n in notes if n.get("summary"))[:12000]
+        if not context:
+            return ""
+        lang = LANGUAGE_NAMES.get(main_language([question]), "English")
+        return self.chat([
+            {"role": "system", "content": "Answer the user's question using ONLY these summaries of their calls. "
+                                          "If the answer isn't there, say so. Be brief. Name the call you used. "
+                                          f"Answer in {lang}.\n\n{context}"},
+            {"role": "user", "content": question},
+        ], max_tokens=1500, reasoning=True, timeout=180)
+
 
 def main_language(lines: list[str]) -> str:
     """Each line votes Arabic or English with its word count. (Counting characters fails: English terms
@@ -105,6 +133,11 @@ def main_language(lines: list[str]) -> str:
 
 
 ARTICLE_TOKENS = {"ال", "لل", "بال", "وال"}
+
+
+def changed_words(before: str, after: str) -> int:
+    """How many words an accepted cleanup actually changed (for the Insights "fixes" counter)."""
+    return levenshtein(fold(before).split(), fold(after).split())
 
 
 def check_edit(before: str, after: str) -> str | None:

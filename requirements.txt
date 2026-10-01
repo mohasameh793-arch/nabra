@@ -1,5 +1,6 @@
 # Engine
 faster-whisper>=1.2
+av<19  # PyAV 19 removed open(metadata_errors=...), which faster-whisper 1.2.1's decode_audio passes
 httpx>=0.27
 nvidia-cublas-cu12
 nvidia-cudnn-cu12==9.*
