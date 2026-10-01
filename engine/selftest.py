@@ -74,4 +74,31 @@ call = ["وعليكم السلام، خلصت الـ landing page بالـ Next.
 assert main_language(call) == "ar"
 assert main_language(["Let's ship the React app on Friday", "sounds good"]) == "en"
 
+# shortcuts: line breaks, styles, snippets, commands
+from shortcuts import Snippets, apply_style, classify, spoken_breaks  # noqa: E402
+
+assert spoken_breaks("Hello. New line. how are you")[0] == "Hello.\nHow are you"
+assert spoken_breaks("السلام عليكم سطر جديد كيف حالك")[0] == "السلام عليكم\nكيف حالك"
+assert spoken_breaks("first new paragraph second") == ("first\n\nSecond", 1)
+assert spoken_breaks("the newline character")[0] == "the newline character"  # not a whole phrase
+assert apply_style("See you tomorrow.", "formal") == "See you tomorrow."
+assert apply_style("See you tomorrow.", "casual") == "See you tomorrow"
+assert apply_style("Are you coming?", "casual") == "Are you coming?"
+assert apply_style("Sure. GitHub is down. API too.", "very_casual") == "sure. GitHub is down. API too"
+assert apply_style("تمام، نشوفك بكرة.", "very_casual") == "تمام، نشوفك بكرة"
+assert apply_style("Wait...", "casual") == "Wait..."
+with tempfile.TemporaryDirectory() as d:
+    path = Path(d) / "snippets.json"
+    path.write_text(json.dumps([{"trigger": "my email", "text": "majesty@example.com"},
+                                {"trigger": "توقيعي", "text": "مع التحية،\nمحمد"}]), encoding="utf-8")
+    snip = Snippets(path)
+    assert snip.expand("My email.") == ("majesty@example.com", 1)
+    assert snip.expand("send it to my email please") == ("send it to majesty@example.com please", 1)
+    assert snip.expand("توقيعي") == ("مع التحية،\nمحمد", 1)
+    assert snip.expand("my emails are full") == ("my emails are full", 0)
+assert classify("Scratch that.") == "delete_last" and classify("امسحها") == "delete_last"
+assert classify("سطر جديد") == "new_line" and classify("new paragraph") == "new_paragraph"
+assert classify("make it shorter") == "transform" and classify("ترجمها للإنجليزي") == "transform"
+assert classify("delete that paragraph about pricing") == "transform"  # only exact commands are fixed actions
+
 print("engine selftest: all checks passed")

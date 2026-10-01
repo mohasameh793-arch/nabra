@@ -96,6 +96,17 @@ class Llm:
         partials = [ask(f"Part {i + 1} of {len(parts)} of one call:\n{p}") for i, p in enumerate(parts)]
         return ask("Merge these summaries of consecutive parts of one call into one summary:\n\n" + "\n\n".join(partials))
 
+    def transform(self, text: str, instruction: str) -> str:
+        """Rewrite `text` as the user explicitly asked ("make it shorter", "ترجمها للإنجليزي").
+        This is the only place rewriting or translating is allowed: the user requested it."""
+        out = self.chat([
+            {"role": "system", "content": "Apply the user's instruction to the text. Keep its language and meaning unless "
+                                          "the instruction says otherwise. Keep names, numbers, URLs and code exact. "
+                                          "Reply with the resulting text only: no quotes, no explanations."},
+            {"role": "user", "content": f"Instruction: {instruction}\n\nText:\n{text}"},
+        ], max_tokens=1500, timeout=120)
+        return out.strip().strip('"“”«»')
+
     def title(self, summary: str) -> str:
         """A short title for a note, in the summary's own language."""
         lang = LANGUAGE_NAMES.get(main_language(summary.splitlines()), "English")
