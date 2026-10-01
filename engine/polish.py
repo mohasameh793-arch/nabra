@@ -100,9 +100,13 @@ class Llm:
         """Rewrite `text` as the user explicitly asked ("make it shorter", "ترجمها للإنجليزي").
         This is the only place rewriting or translating is allowed: the user requested it."""
         out = self.chat([
-            {"role": "system", "content": "Apply the user's instruction to the text. Keep its language and meaning unless "
-                                          "the instruction says otherwise. Keep names, numbers, URLs and code exact. "
-                                          "Reply with the resulting text only: no quotes, no explanations."},
+            {"role": "system", "content": "You edit text exactly as the user instructs. The instruction may be in Arabic or "
+                                          "English. Actually make the change: rewriting, shortening, changing tone or "
+                                          "translating are all expected. Write the result in the same language as the text "
+                                          "unless the instruction asks for another language. Keep names, numbers, URLs and "
+                                          "code exact. Reply with the edited text only: no quotes, no explanations."},
+            {"role": "user", "content": "Instruction: خلها رسمية\n\nText:\nيا شباب بكرة الاجتماع الساعة ٩ لا تتأخرون"},
+            {"role": "assistant", "content": "نود تذكيركم بأن الاجتماع سيُعقد غداً في تمام الساعة ٩، ونرجو الالتزام بالموعد."},
             {"role": "user", "content": f"Instruction: {instruction}\n\nText:\n{text}"},
         ], max_tokens=1500, timeout=120)
         return out.strip().strip('"“”«»')
