@@ -8,11 +8,12 @@ import * as snippets from "./js/snippets.js";
 import * as style from "./js/style.js";
 import * as transforms from "./js/transforms.js";
 import * as scratchpad from "./js/scratchpad.js";
+import * as setup from "./js/setup.js";
 import { openSettings, openHelp } from "./js/settings.js";
 
 setTheme(getTheme());
 
-const PAGES = { dictation, notetaker, insights, dictionary, snippets, style, transforms, scratchpad };
+const PAGES = { dictation, notetaker, insights, dictionary, snippets, style, transforms, scratchpad, setup };
 let current = "dictation";
 
 export function go(page) {
@@ -61,16 +62,17 @@ listen("goto", (e) => go(e.payload));
 listen("dictation", (e) => { dictation.added(e.payload); if (current === "insights") insights.render(); });
 listen("engine", (e) => { state.boot.engine = e.payload; });
 notetaker.wire();
+setup.wire();
 
 // ---------- boot ----------
 (async () => {
   state.boot = await call("boot");
   state.settings = state.boot.settings;
-  [state.history] = await Promise.all([call("history"), dictionary.load(), notetaker.load(), snippets.load(), scratchpad.load()]);
+  [state.history] = await Promise.all([call("history"), dictionary.load(), notetaker.load(), snippets.load(), scratchpad.load(), setup.load()]);
   if (state.boot.meeting) {
     notetaker.startLive(state.boot.meeting, await call("live_lines"));
     $("#nav-live").hidden = false;
   }
-  go(location.hash.slice(1) || "dictation");
+  go(state.boot.setup_ready ? location.hash.slice(1) || "dictation" : "setup");
   drawNotifications();
 })().catch((e) => toast(`Couldn't load Nabra: ${e}`));

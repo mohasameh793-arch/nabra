@@ -19,11 +19,34 @@ const ENGINE: &str = "http://127.0.0.1:8770";
 const LLM_PORT: u16 = 8771;
 const NO_WINDOW: u32 = 0x0800_0000;
 
-/// Project root: NABRA_ROOT, else the repo this binary was built from (dev layout).
+/// Source checkout root (the repo this binary was built from), or NABRA_ROOT. Only used when the app runs
+/// from source; an installed app uses its bundled engine.
 pub fn root() -> PathBuf {
     std::env::var_os("NABRA_ROOT")
         .map(PathBuf::from)
         .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf())
+}
+
+pub fn logs_dir() -> PathBuf {
+    crate::assets::dir().parent().map(|p| p.join("logs")).unwrap_or_else(|| PathBuf::from("logs"))
+}
+
+/// How to run the engine: the bundled `nabra-engine.exe` (installer), else Python from the source checkout.
+/// Returns (program, leading args, working dir).
+pub fn engine_command(app: &tauri::AppHandle) -> Result<(PathBuf, Vec<String>, PathBuf), String> {
+    use tauri::Manager;
+    if let Ok(res) = app.path().resource_dir() {
+        let exe = res.join("engine").join("nabra-engine.exe");
+        if exe.exists() {
+            return Ok((exe, vec![], res.join("engine")));
+        }
+    }
+    let root = root();
+    let python = root.join(".venv").join("Scripts").join("python.exe");
+    if python.exists() {
+        return Ok((python, vec![root.join("engine").display().to_string()], root));
+    }
+    Err("The speech engine isn't installed. Reinstall Nabra, or run scripts\\setup.ps1 in a source checkout.".into())
 }
 
 fn job() -> Result<HANDLE, String> {
@@ -42,11 +65,11 @@ fn job() -> Result<HANDLE, String> {
     }
 }
 
-fn launch(job: HANDLE, exe: &Path, args: &[String], log: &Path) -> Result<(), String> {
+fn launch(job: HANDLE, exe: &Path, args: &[String], cwd: &Path, log: &Path) -> Result<(), String> {
     let out = std::fs::File::create(log).map_err(|e| e.to_string())?;
     let child = Command::new(exe)
         .args(args)
-        .current_dir(root())
+        .current_dir(cwd)
         .env("PYTHONIOENCODING", "utf-8")
         .stdin(Stdio::null())
         .stdout(out.try_clone().map_err(|e| e.to_string())?)
@@ -62,39 +85,44 @@ fn launch(job: HANDLE, exe: &Path, args: &[String], log: &Path) -> Result<(), St
 pub struct Launch<'a> {
     pub dictionary: &'a Path,
     pub snippets: &'a Path,
+    pub clips: &'a Path,
     pub keep_clips: bool,
 }
 
-pub fn start(opts: Launch) -> Result<(), String> {
-    let root = root();
-    let logs = root.join("logs");
+pub fn start(app: &tauri::AppHandle, opts: Launch) -> Result<(), String> {
+    use crate::assets::{self, Part};
+    let logs = logs_dir();
     std::fs::create_dir_all(&logs).map_err(|e| e.to_string())?;
     let job = job()?;
-
-    let python = root.join(".venv/Scripts/python.exe");
-    if !python.exists() {
-        return Err("Python environment missing. Run scripts\\setup.ps1 first.".into());
-    }
-    let mut engine = vec![
-        root.join("engine").display().to_string(),
+    let (program, mut args, cwd) = engine_command(app)?;
+    args.extend([
         "--port".into(),
         "8770".into(),
         "--dictionary".into(),
         opts.dictionary.display().to_string(),
         "--snippets".into(),
         opts.snippets.display().to_string(),
-    ];
-    let (llama, model) = (root.join(".assets/llama/llama-server.exe"), root.join(".assets/models/Qwen3-8B-Q4_K_M.gguf"));
-    if llama.exists() && model.exists() {
-        let args = ["-m", &model.display().to_string(), "-ngl", "99", "-c", "8192", "--host", "127.0.0.1", "--port",
-            &LLM_PORT.to_string(), "--jinja"];
-        launch(job, &llama, &args.map(String::from), &logs.join("llama.log"))?;
-        engine.extend(["--llm-url".into(), format!("http://127.0.0.1:{LLM_PORT}")]);
+    ]);
+    // Speech model chosen by first-run setup: large-v3 on an NVIDIA GPU, large-v3-turbo on CPU.
+    if Part::WhisperGpu.installed() {
+        args.extend(["--whisper".into(), assets::whisper_gpu().display().to_string()]);
+    } else if Part::WhisperCpu.installed() {
+        args.extend(["--whisper".into(), assets::whisper_cpu().display().to_string()]);
+    }
+    if Part::Cuda.installed() {
+        args.extend(["--cuda-dir".into(), assets::cuda().display().to_string()]);
+    }
+    if Part::Llama.installed() && Part::Qwen.installed() {
+        let llm = ["-m", &assets::qwen().display().to_string(), "-ngl", "99", "-c", "8192", "--host", "127.0.0.1",
+            "--port", &LLM_PORT.to_string(), "--jinja"];
+        let llama = assets::llama_server();
+        launch(job, &llama, &llm.map(String::from), llama.parent().unwrap(), &logs.join("llama.log"))?;
+        args.extend(["--llm-url".into(), format!("http://127.0.0.1:{LLM_PORT}")]);
     }
     if opts.keep_clips {
-        engine.extend(["--keep-clips".into(), root.join("bench/real").display().to_string()]);
+        args.extend(["--keep-clips".into(), opts.clips.display().to_string()]);
     }
-    launch(job, &python, &engine, &logs.join("engine.log"))
+    launch(job, &program, &args, &cwd, &logs.join("engine.log"))
 }
 
 #[derive(Clone, Debug, Deserialize, serde::Serialize)]
@@ -114,7 +142,7 @@ pub fn wait_ready(limit: Duration) -> Result<Health, String> {
             return Ok(h);
         }
         if t0.elapsed() > limit {
-            return Err("The speech engine didn't start. Details: logs\\engine.log".into());
+            return Err(format!("The speech engine didn't start. Details: {}", logs_dir().join("engine.log").display()));
         }
         std::thread::sleep(Duration::from_millis(400));
     }
@@ -123,7 +151,9 @@ pub fn wait_ready(limit: Duration) -> Result<Health, String> {
 fn explain(e: ureq::Error) -> String {
     match e {
         ureq::Error::Status(503, _) => "The local AI model isn't running.".into(),
-        ureq::Error::Status(code, _) => format!("The speech engine hit an error ({code}). Details: logs\\engine.log"),
+        ureq::Error::Status(code, _) => {
+            format!("The speech engine hit an error ({code}). Details: {}", logs_dir().join("engine.log").display())
+        }
         ureq::Error::Transport(_) => "The speech engine isn't running.".into(),
     }
 }

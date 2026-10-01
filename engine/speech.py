@@ -17,16 +17,22 @@ MIXED_EXAMPLE = "طيب خلنا نسوي deploy للـ app على Vercel وبع
 CONFIDENT_DETECTION = 0.8
 
 
-def _cuda_dlls_on_path() -> None:
-    """The nvidia-* wheels ship cuBLAS/cuDNN DLLs that Windows won't find on its own."""
-    for root in site.getsitepackages():
-        for d in Path(root).glob("nvidia/*/bin"):
-            os.environ["PATH"] = str(d) + os.pathsep + os.environ["PATH"]
+def _cuda_dlls_on_path(cuda_dir: Path | None) -> None:
+    """Make cuBLAS/cuDNN findable: the folder the app downloaded them to, else the nvidia-* pip wheels
+    (from-source setups). Windows won't find either on its own."""
+    dirs = [cuda_dir] if cuda_dir and cuda_dir.is_dir() else []
+    try:
+        dirs += [d for root in site.getsitepackages() for d in Path(root).glob("nvidia/*/bin")]
+    except AttributeError:  # frozen (packaged) builds have no site-packages
+        pass
+    for d in dirs:
+        os.environ["PATH"] = str(d) + os.pathsep + os.environ["PATH"]
 
 
 class Transcriber:
-    def __init__(self, model: str = "large-v3"):
-        _cuda_dlls_on_path()
+    def __init__(self, model: str = "large-v3", cuda_dir: Path | None = None):
+        """`model`: a local model folder (what the app downloads) or a faster-whisper model name."""
+        _cuda_dlls_on_path(cuda_dir)
         from faster_whisper import WhisperModel
 
         try:

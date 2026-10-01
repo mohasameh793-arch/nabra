@@ -29,6 +29,8 @@ pub enum Control {
     MeetingStarting(String),
     /// The user closed a result or meeting prompt on the pill.
     Dismiss,
+    /// First-run downloads finished: start the engine.
+    SetupDone,
     /// Something outside changed (e.g. notes started from the hub): re-render the pill.
     Refresh,
 }
@@ -278,15 +280,31 @@ impl Controller {
     }
 
     pub fn run(mut self, inbox: Receiver<Control>) {
+        if !crate::assets::ready() {
+            // First run: the models aren't downloaded yet. The hub's Setup page does that, then tells us.
+            self.render(View::Working { label: "Finish setting up Nabra in its window".into() });
+            crate::open_hub(&self.app, Some("setup"));
+            loop {
+                match inbox.recv() {
+                    Ok(Control::SetupDone) => break,
+                    Ok(_) => {}
+                    Err(_) => return,
+                }
+            }
+        }
         self.render(View::Working { label: "Starting Nabra…".into() });
         let launched = {
             let state = self.state();
             let keep_clips = state.settings.lock().unwrap().keep_clips;
-            sidecar::start(sidecar::Launch {
-                dictionary: &state.store.dictionary_path(),
-                snippets: &state.store.snippets_path(),
-                keep_clips,
-            })
+            sidecar::start(
+                &self.app,
+                sidecar::Launch {
+                    dictionary: &state.store.dictionary_path(),
+                    snippets: &state.store.snippets_path(),
+                    clips: &state.store.dir.join("clips"),
+                    keep_clips,
+                },
+            )
         };
         match launched.and_then(|_| sidecar::wait_ready(Duration::from_secs(240))) {
             Ok(health) => {

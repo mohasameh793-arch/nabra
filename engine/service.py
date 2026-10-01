@@ -29,10 +29,11 @@ log = logging.getLogger("nabra.service")
 
 
 class Engine:
-    def __init__(self, dictionary: Path | None, snippets: Path | None, llm_url: str | None, keep_clips: Path | None):
+    def __init__(self, dictionary: Path | None, snippets: Path | None, llm_url: str | None, keep_clips: Path | None,
+                 whisper: str = "large-v3", cuda_dir: Path | None = None):
         self.lexicon = Lexicon(Path(__file__).with_name("lexicon_builtin.tsv"), dictionary)
         self.snippets = Snippets(snippets)
-        self.speech = Transcriber()
+        self.speech = Transcriber(whisper, cuda_dir)
         self.llm = Llm(llm_url) if llm_url else None
         self.keep_clips = keep_clips
         self.gpu = Lock()  # one decode at a time; dictation and call notes share the GPU

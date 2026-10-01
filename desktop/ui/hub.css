@@ -390,3 +390,13 @@ kbd { font: 600 12px "Segoe UI", sans-serif; background: var(--sunk); border: 1p
 .words-cloud { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .words-cloud span { background: var(--sunk); border-radius: 999px; padding: 4px 10px; font-size: 13px; unicode-bidi: plaintext; }
 .words-cloud small { color: var(--muted); margin-inline-start: 4px; }
+
+/* ---------- first-run setup ---------- */
+.setup .card { padding: 16px 18px; margin: 18px 0; }
+.setup-machine p, .setup-error p { margin: 4px 0 0; }
+.setup-error { border-color: color-mix(in srgb, var(--rec) 40%, var(--line)); }
+.setup-row { grid-template-columns: 1fr auto; }
+.bar-track { height: 6px; border-radius: 999px; background: var(--sunk); margin-top: 8px; overflow: hidden; }
+.bar-fill { height: 100%; background: var(--accent); border-radius: inherit; transition: width 200ms linear; }
+.setup-actions { display: flex; align-items: center; gap: 14px; margin-top: 22px; flex-wrap: wrap; }
+.setup-actions .muted { font-size: 12px; }

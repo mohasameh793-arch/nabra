@@ -6,7 +6,9 @@ use tauri::{AppHandle, Manager, State};
 use crate::dictation::Control;
 use crate::keyboard::{COMMAND_KEY_LABEL, NOTES_KEY_LABEL, TALK_KEY_LABEL};
 use crate::store::{Dictation, Line, Note, NoteCard, Pad, Settings, Snippet, Word};
-use crate::{calendar, keyboard, meeting, secrets, sidecar, sound, App, CALENDAR_SECRET};
+use crate::{assets, calendar, keyboard, meeting, secrets, sidecar, sound, App, CALENDAR_SECRET};
+use std::sync::atomic::{AtomicBool, Ordering};
+use tauri::Emitter;
 
 type Res<T> = Result<T, String>;
 
@@ -24,6 +26,7 @@ fn boot(state: State<App>) -> Value {
         "meeting": meeting.as_ref().map(|m| json!({ "id": m.id, "elapsed": m.started.elapsed().as_secs_f32() })),
         "keys": { "talk": TALK_KEY_LABEL, "notes": NOTES_KEY_LABEL, "command": COMMAND_KEY_LABEL },
         "calendar_connected": secrets::get(CALENDAR_SECRET).is_some(),
+        "setup_ready": assets::ready(),
         "version": env!("CARGO_PKG_VERSION"),
     })
 }
@@ -144,16 +147,72 @@ fn disconnect_calendar(state: State<App>) {
 }
 
 /// How to connect an MCP client (Claude Code / Claude Desktop / others) to the read-only notes server.
+/// It's the engine program in `--mcp` mode: bundled exe when installed, Python in a source checkout.
 #[tauri::command]
-fn mcp_setup(state: State<App>) -> Value {
-    let root = sidecar::root();
-    let python = root.join(".venv").join("Scripts").join("python.exe").display().to_string();
-    let script = root.join("engine").join("mcp_notes.py").display().to_string();
+fn mcp_setup(app: AppHandle, state: State<App>) -> Res<Value> {
+    let (program, lead, _) = sidecar::engine_command(&app)?;
     let notes = state.store.dir.join("notes").display().to_string();
+    let mut args: Vec<String> = lead;
+    args.extend(["--mcp".into(), "--notes".into(), notes]);
+    let quoted: Vec<String> = std::iter::once(program.display().to_string()).chain(args.clone()).map(|a| format!("\"{a}\"")).collect();
+    Ok(json!({
+        "claude_code": format!("claude mcp add -s user nabra-notes -- {}", quoted.join(" ")),
+        "json": { "mcpServers": { "nabra-notes": { "command": program.display().to_string(), "args": args } } },
+    }))
+}
+
+static SETTING_UP: AtomicBool = AtomicBool::new(false);
+
+/// What this PC needs to download, and what's already there.
+#[tauri::command]
+fn setup_status() -> Value {
+    let (vram, parts) = assets::plan();
     json!({
-        "claude_code": format!("claude mcp add nabra-notes -- \"{python}\" \"{script}\" --notes \"{notes}\""),
-        "json": { "mcpServers": { "nabra-notes": { "command": python, "args": [script, "--notes", notes] } } },
+        "gpu_vram_mb": vram,
+        "ready": parts.iter().all(|p| p.installed()),
+        "running": SETTING_UP.load(Ordering::SeqCst),
+        "folder": assets::dir().display().to_string(),
+        "parts": parts.iter().map(|p| json!({ "id": p, "label": p.label(), "mb": p.approx_mb(), "installed": p.installed() })).collect::<Vec<_>>(),
     })
+}
+
+/// Downloads everything missing, emitting `setup-progress`; then starts Nabra. Safe to re-run: it resumes.
+#[tauri::command]
+async fn setup_run(app: AppHandle) -> Res<()> {
+    if SETTING_UP.swap(true, Ordering::SeqCst) {
+        return Err("Setup is already running".into());
+    }
+    let result = blocking({
+        let app = app.clone();
+        move || {
+            let (_, parts) = assets::plan();
+            for part in parts.into_iter().filter(|p| !p.installed()) {
+                let _ = app.emit("setup-progress", json!({ "part": part, "done": 0, "total": 0, "stage": "Preparing" }));
+                let files = assets::resolve(part)?;
+                let total: u64 = files.iter().map(|f| f.size).sum();
+                let mut before = 0u64;
+                let mut last_emit = std::time::Instant::now();
+                for f in &files {
+                    assets::fetch(f, |done| {
+                        if last_emit.elapsed().as_millis() >= 250 {
+                            last_emit = std::time::Instant::now();
+                            let _ = app.emit("setup-progress", json!({ "part": part, "done": before + done, "total": total, "stage": "Downloading" }));
+                        }
+                    })?;
+                    before += f.size;
+                }
+                assets::mark_complete(part);
+                let _ = app.emit("setup-progress", json!({ "part": part, "done": total, "total": total, "stage": "Done" }));
+            }
+            Ok(())
+        }
+    })
+    .await;
+    SETTING_UP.store(false, Ordering::SeqCst);
+    result?;
+    app.state::<App>().tell(Control::SetupDone);
+    let _ = app.emit("setup-done", ());
+    Ok(())
 }
 
 #[tauri::command]
@@ -285,6 +344,8 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         refresh_calendar,
         disconnect_calendar,
         mcp_setup,
+        setup_status,
+        setup_run,
         notes,
         note,
         delete_note,

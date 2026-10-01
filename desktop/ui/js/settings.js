@@ -105,7 +105,7 @@ async function body() {
       keep.checked = s.keep_clips;
       return [h("h2", {}, "Privacy"),
         h("p", { class: "muted" }, "Speech recognition and AI cleanup run on this PC. Nothing you say is uploaded."),
-        field("Keep my dictation audio for accuracy testing", "Saves your own dictations (never call audio) to bench\\real so recognition can be measured on your voice.", keep),
+        field("Keep my dictation audio for accuracy testing", "Saves your own dictations (never call audio) to the clips folder in Nabra's data folder, so recognition can be measured on your voice.", keep),
         field("Delete all dictation history", "Removes every saved dictation. Notes and dictionary stay.",
           h("button", { class: "btn danger", onclick: async () => {
             if (!confirm("Delete all dictation history? This can't be undone.")) return;
@@ -121,7 +121,10 @@ async function body() {
         field("Version", null, h("span", {}, state.boot.version)),
         field("Speech engine", "Whisper large-v3, local", h("span", {}, e ? (e.device === "cuda" ? "Running on GPU" : "Running on CPU") : "Starting…")),
         field("AI cleanup & overviews", "Qwen3 8B, local", h("span", {}, e?.llm ? "Ready" : "Off")),
-        field("Your data", "Settings, dictionary, history and notes stay in this PC's app data folder.", h("span"))];
+        field("Models", "Speech and AI models downloaded during setup.",
+          h("button", { class: "btn", onclick: () => { $("#settings-modal").close(); import("../hub.js").then((m) => m.go("setup")); } }, "Open setup")),
+        field("Your data", "Settings, dictionary, history and notes stay in this PC's app data folder.", h("span")),
+        field("Open source", "Nabra is MIT-licensed. An independent project, not affiliated with Wispr.", h("span"))];
     }
   }
   return [];
