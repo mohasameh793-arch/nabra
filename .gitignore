@@ -9,3 +9,4 @@ logs/
 build/
 dist/
 build-installer.log
+*.log
