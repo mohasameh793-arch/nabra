@@ -1,1 +1,67 @@
-<!doctype html><title>hub</title>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nabra</title>
+<link rel="stylesheet" href="hub.css">
+</head>
+<body>
+  <header class="titlebar" data-tauri-drag-region>
+    <div class="tb-left">
+      <button class="icon-btn" id="toggle-sidebar" aria-label="Toggle sidebar" title="Toggle sidebar">
+        <svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M9.5 4.5v15"/></svg>
+      </button>
+      <button class="icon-btn" id="profile" aria-label="Profile and settings" title="Settings">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="10" r="3"/><path d="M6.5 18c1.3-2.2 3.2-3.2 5.5-3.2s4.2 1 5.5 3.2"/></svg>
+      </button>
+    </div>
+    <div class="tb-right">
+      <button class="icon-btn" id="bell" aria-label="Notifications" title="Notifications">
+        <svg viewBox="0 0 24 24"><path d="M6.5 16.5h11l-1.4-2V10a4.1 4.1 0 0 0-8.2 0v4.5z"/><path d="M10.3 19a1.8 1.8 0 0 0 3.4 0"/></svg>
+        <span class="badge" id="bell-badge" hidden></span>
+      </button>
+      <button class="win-btn" id="win-min" aria-label="Minimize"><svg viewBox="0 0 24 24"><path d="M6 12h12"/></svg></button>
+      <button class="win-btn" id="win-max" aria-label="Maximize"><svg viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="1"/></svg></button>
+      <button class="win-btn close" id="win-close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg></button>
+    </div>
+    <div class="popover" id="notifications" hidden>
+      <h4>Notifications</h4>
+      <ul id="notification-list"></ul>
+      <p class="muted" id="notification-empty">You're all caught up.</p>
+    </div>
+  </header>
+
+  <div class="frame">
+    <nav class="sidebar" aria-label="Main">
+      <div class="wordmark"><span class="logo" aria-hidden="true"></span><span>Nabra</span></div>
+      <a href="#dictation" class="nav" data-page="dictation">
+        <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg><span>Dictation</span></a>
+      <a href="#notetaker" class="nav" data-page="notetaker">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4" class="fill"/></svg><span>Notetaker</span><i class="live-dot" id="nav-live" hidden></i></a>
+      <a href="#insights" class="nav" data-page="insights">
+        <svg viewBox="0 0 24 24"><path d="M4 20V4M4 20h16M8.5 16v-5M13 16V8M17.5 16v-8"/></svg><span>Insights</span></a>
+      <a href="#dictionary" class="nav" data-page="dictionary">
+        <svg viewBox="0 0 24 24"><path d="M6.5 3.5h9l3 3v14h-12z"/><path d="M9 10h6M9 13.5h6M9 17h4"/></svg><span>Dictionary</span></a>
+      <div class="spacer"></div>
+      <button class="nav" id="open-settings">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8"/></svg><span>Settings</span></button>
+      <button class="nav" id="open-help">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M9.8 9.6a2.3 2.3 0 1 1 3.2 2.1c-.7.3-1 .8-1 1.5v.5M12 16.8v.2"/></svg><span>Help</span></button>
+    </nav>
+
+    <main class="sheet" id="sheet">
+      <section class="page" id="page-dictation"></section>
+      <section class="page" id="page-notetaker" hidden></section>
+      <section class="page" id="page-insights" hidden></section>
+      <section class="page" id="page-dictionary" hidden></section>
+    </main>
+  </div>
+
+  <dialog class="modal" id="settings-modal" aria-label="Settings"></dialog>
+  <dialog class="modal small" id="word-modal" aria-label="Dictionary word"></dialog>
+  <dialog class="modal small" id="help-modal" aria-label="Help"></dialog>
+  <div class="toast" id="toast" role="status" hidden></div>
+
+  <script type="module" src="hub.js"></script>
+</body>
+</html>
