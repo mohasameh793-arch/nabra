@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="brand/nabra-logo-dark.svg">
+    <img src="brand/nabra-logo.svg" alt="Nabra · نبرة" width="380">
+  </picture>
+</p>
+
 # Nabra · نبرة
 
 **Free, open-source voice typing and meeting notes that run on your own PC.**
@@ -209,6 +216,7 @@ desktop/   src/ (Rust app) · ui/ (pill + main window: HTML/CSS/JS) · icons/ ·
 bench/     accuracy benchmark: score · voices · run · sentences.jsonl
 scripts/   setup.ps1 · build-installer.ps1
 docs/      PLAN.md · BENCHMARKS.md
+brand/     logo + app icon (SVG) · export.py → icon.ico, PNGs, GitHub social preview
 ```
 
 ## Make a release (maintainers)
