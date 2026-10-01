@@ -1,8 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Nabra">
   <rect width="64" height="64" rx="15" fill="#141413"/>
-  <g fill="none" stroke="#F6F4EF" stroke-linecap="round">
-    <path d="M13 29a19 19 0 0 0 38 0" stroke-width="6"/>
-    <path d="M25.5 35v5.5M32 28.5v12M38.5 33v7.5" stroke-width="4.6"/>
+  <g transform="translate(2 13) scale(0.6)">
+  <g fill="none" stroke="#F6F4EF" stroke-width="6.2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M14 6 V34 C14 41 11 46 7 49 C14 49 22 41 30 30"/>
+    <path d="M30 6 V28 C30 36 42 48 52 54 C55 56 58 57 62 57 H70 C80 57 88 50 88 40 V31"/>
   </g>
-  <circle cx="32" cy="15.5" r="4.8" fill="#2BB3A3"/>
+  <g stroke="#F6F4EF" stroke-width="5.6" stroke-linecap="round">
+    <path d="M58 37 V49 M66 43 V49 M74 38 V49"/>
+  </g>
+  <circle cx="66" cy="33.5" r="4.2" fill="#2BB3A3"/>
+  <circle cx="81.5" cy="41" r="3" fill="#F6F4EF"/>
+  </g>
 </svg>

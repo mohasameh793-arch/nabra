@@ -106,7 +106,7 @@ body.compact .nav span, body.compact .wordmark span:last-child { display: none; 
 
 .sidebar { display: flex; flex-direction: column; gap: 2px; padding: 6px 10px 12px; min-height: 0; }
 .wordmark { display: flex; align-items: center; gap: 8px; font-size: 20px; font-weight: 700; letter-spacing: -0.02em; padding: 8px 8px 22px; }
-.logo { width: 28px; height: 28px; flex: none; color: var(--ink); }
+.logo { width: 40px; height: 26px; flex: none; color: var(--ink); }
 .logo-dot { fill: var(--accent); }
 .nav {
   display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 9px; border: 0; background: none;

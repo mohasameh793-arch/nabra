@@ -2,7 +2,7 @@
 body.meeting-window { display: grid; grid-template-rows: 40px 1fr; background: var(--sheet); }
 .meeting-window .titlebar { padding: 0 0 0 12px; border-bottom: 1px solid var(--line); background: var(--canvas); }
 .mw-brand { display: flex; align-items: center; gap: 6px; font-weight: 700; font-size: 13px; }
-.mw-brand .logo { width: 20px; height: 20px; }
+.mw-brand .logo { width: 30px; height: 20px; }
 .meeting-window .win-btn { height: 40px; }
 
 .mw { overflow: hidden; display: flex; flex-direction: column; min-height: 0; padding: 18px 20px 14px; gap: 12px; }

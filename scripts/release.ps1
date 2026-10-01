@@ -9,7 +9,10 @@ param(
     [string]$Notes = "",
     [string]$Repo = "mohasameh793-arch/nabra"
 )
-$ErrorActionPreference = "Stop"
+# Not "Stop": Windows PowerShell 5.1 turns any stderr line from git/gh/cargo (progress, "release not found")
+# into a fatal error. Every native command below is checked through $LASTEXITCODE instead.
+$ErrorActionPreference = "Continue"
+function Check($what) { if ($LASTEXITCODE) { throw "$what failed (exit $LASTEXITCODE)" } }
 $root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
 
@@ -17,7 +20,8 @@ $key = Join-Path $env:USERPROFILE ".nabra-signing\updater.key"
 if (-not (Test-Path $key)) { throw "Updater signing key not found at $key" }
 if (git status --porcelain) { throw "Commit or stash your changes first." }
 if ((git rev-parse --abbrev-ref HEAD) -ne "main") { throw "Release from the main branch." }
-if (gh release view "v$Version" --repo $Repo 2>$null) { throw "v$Version is already released." }
+gh release view "v$Version" --repo $Repo *> $null
+if ($LASTEXITCODE -eq 0) { throw "v$Version is already released." }
 
 # 1. Version everywhere.
 $cargo = Get-Content desktop\Cargo.toml -Raw
@@ -39,8 +43,8 @@ if ($LASTEXITCODE) { Pop-Location; throw "Rust tests failed" }
 Pop-Location
 
 git add -A
-git commit -q -m "Release v$Version"
-git push -q
+git commit -q -m "Release v$Version"; Check "git commit"
+git push -q; Check "git push"
 
 # 3. Build + sign (the key file path is passed through the environment, never written anywhere).
 $env:TAURI_SIGNING_PRIVATE_KEY = $key
@@ -77,4 +81,5 @@ SHA-256 of ``Nabra-Setup.exe``: ``$sha``
 "@
 gh release create "v$Version" dist\Nabra-Setup.exe dist\Nabra-Setup.exe.sha256 dist\latest.json `
     --repo $Repo --target main --title "Nabra $Version" --notes $body --latest
+Check "gh release create"
 Write-Host "Released v$Version. Installed copies will update within ~6 hours (or via Settings → About → Check for updates)."
