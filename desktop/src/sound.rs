@@ -107,6 +107,16 @@ where
         .map_err(|e| format!("Can't open the audio device: {e}"))
 }
 
+/// Whisper mode: quiet speech (soft voice, far mic) is raised toward a normal level so voice detection
+/// doesn't throw it away. Loud audio is left alone; gain is capped so silence isn't turned into hiss.
+pub fn lift_quiet(samples: &mut [f32]) {
+    let peak = samples.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+    if peak > 0.002 && peak < 0.5 {
+        let gain = (0.9 / peak).min(8.0);
+        samples.iter_mut().for_each(|s| *s *= gain);
+    }
+}
+
 /// Mono samples → 16-bit PCM WAV (the engine resamples to 16 kHz).
 pub fn wav(samples: &[f32], rate: u32) -> Vec<u8> {
     let data = (samples.len() * 2) as u32;
@@ -146,6 +156,16 @@ mod tests {
         assert_eq!(u32::from_le_bytes(w[24..28].try_into().unwrap()), 48_000);
         assert_eq!(&w[36..40], b"data");
         assert_eq!(i16::from_le_bytes([w[50], w[51]]), 32767); // clamped
+    }
+
+    #[test]
+    fn quiet_speech_is_lifted_loud_is_not() {
+        let mut quiet = vec![0.05, -0.1, 0.02];
+        lift_quiet(&mut quiet);
+        assert!((quiet[1] + 0.8).abs() < 1e-6, "{quiet:?}"); // capped at 8x
+        let mut loud = vec![0.7, -0.6];
+        lift_quiet(&mut loud);
+        assert_eq!(loud, [0.7, -0.6]);
     }
 
     /// Hardware check: `cargo test -- --ignored loopback`

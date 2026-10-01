@@ -1,16 +1,20 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod calendar;
 mod commands;
 mod dictation;
 mod keyboard;
 mod meeting;
 mod pill;
+mod secrets;
 mod sidecar;
 mod sound;
 mod store;
 
+use std::collections::HashSet;
 use std::sync::mpsc::{channel, Sender};
 use std::sync::Mutex;
+use std::time::Duration;
 
 use serde_json::json;
 use tauri::menu::{Menu, MenuItem};
@@ -29,6 +33,10 @@ pub struct App {
     pub engine: Mutex<Option<sidecar::Health>>,
     pub last_text: Mutex<String>,
     pub control: Mutex<Sender<Control>>,
+    /// Upcoming events from the user's iCal link (empty if none connected).
+    pub calendar: Mutex<Vec<calendar::Event>>,
+    /// (title, when offered) of the meeting the pill just offered notes for.
+    pub pending_title: Mutex<Option<(String, u64)>>,
 }
 
 impl App {
@@ -75,12 +83,59 @@ pub fn toggle_meeting(app: &AppHandle) -> Result<(), String> {
             let _ = app.emit_to("hub", "consent-needed", ());
             return Ok(());
         }
-        let m = Meeting::start(app.clone(), langs, mic)?;
+        // Use the offered meeting's name only if notes start within 15 minutes of the prompt.
+        let title = state.pending_title.lock().unwrap().take()
+            .filter(|(_, at)| store::now_ms().saturating_sub(*at) < 15 * 60_000)
+            .map(|(t, _)| t);
+        let m = Meeting::start(app.clone(), langs, mic, title)?;
         let _ = app.emit("meeting", json!({ "active": true, "id": m.id, "elapsed": 0 }));
         *state.meeting.lock().unwrap() = Some(m);
     }
     state.tell(Control::Refresh);
     Ok(())
+}
+
+pub const CALENDAR_SECRET: &str = "calendar-ics";
+
+/// Downloads the user's calendar (if connected) into App.calendar and tells the hub.
+pub fn refresh_calendar(app: &AppHandle) -> Result<usize, String> {
+    let Some(url) = secrets::get(CALENDAR_SECRET) else {
+        app.state::<App>().calendar.lock().unwrap().clear();
+        return Ok(0);
+    };
+    let events = calendar::upcoming(&calendar::fetch(&url)?, 7);
+    let n = events.len();
+    *app.state::<App>().calendar.lock().unwrap() = events;
+    let _ = app.emit("calendar", n);
+    Ok(n)
+}
+
+/// Every 30 s: offer notes when a meeting starts. Re-downloads the calendar every 10 minutes.
+fn watch_calendar(app: AppHandle) {
+    let mut prompted: HashSet<(String, i64)> = HashSet::new();
+    let mut tick = 0u32;
+    loop {
+        if tick % 20 == 0 {
+            if let Err(e) = refresh_calendar(&app) {
+                eprintln!("calendar: {e}");
+            }
+        }
+        tick += 1;
+        let state = app.state::<App>();
+        let wanted = state.settings.lock().unwrap().meeting_prompts && state.meeting.lock().unwrap().is_none();
+        if wanted {
+            let now = store::now_ms() as i64;
+            let starting = state.calendar.lock().unwrap().iter()
+                .find(|e| !e.all_day && e.start <= now + 60_000 && e.start >= now - 120_000 && !prompted.contains(&(e.title.clone(), e.start)))
+                .cloned();
+            if let Some(e) = starting {
+                prompted.insert((e.title.clone(), e.start));
+                *state.pending_title.lock().unwrap() = Some((e.title.clone(), store::now_ms()));
+                state.tell(Control::MeetingStarting(e.title));
+            }
+        }
+        std::thread::sleep(Duration::from_secs(30));
+    }
 }
 
 fn main() {
@@ -105,7 +160,11 @@ fn main() {
                 engine: Mutex::new(None),
                 last_text: Mutex::new(String::new()),
                 control: Mutex::new(tx.clone()),
+                calendar: Mutex::new(Vec::new()),
+                pending_title: Mutex::new(None),
             });
+            let watcher = app.handle().clone();
+            std::thread::spawn(move || watch_calendar(watcher));
             pill::init(app.handle());
 
             let (keys_tx, keys) = channel();

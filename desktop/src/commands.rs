@@ -4,9 +4,9 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Manager, State};
 
 use crate::dictation::Control;
-use crate::keyboard::{NOTES_KEY_LABEL, TALK_KEY_LABEL};
-use crate::store::{Dictation, Line, Note, NoteCard, Settings, Word};
-use crate::{keyboard, meeting, sidecar, sound, App};
+use crate::keyboard::{COMMAND_KEY_LABEL, NOTES_KEY_LABEL, TALK_KEY_LABEL};
+use crate::store::{Dictation, Line, Note, NoteCard, Pad, Settings, Snippet, Word};
+use crate::{calendar, keyboard, meeting, secrets, sidecar, sound, App, CALENDAR_SECRET};
 
 type Res<T> = Result<T, String>;
 
@@ -22,7 +22,8 @@ fn boot(state: State<App>) -> Value {
         "settings": *state.settings.lock().unwrap(),
         "engine": *state.engine.lock().unwrap(),
         "meeting": meeting.as_ref().map(|m| json!({ "id": m.id, "elapsed": m.started.elapsed().as_secs_f32() })),
-        "keys": { "talk": TALK_KEY_LABEL, "notes": NOTES_KEY_LABEL },
+        "keys": { "talk": TALK_KEY_LABEL, "notes": NOTES_KEY_LABEL, "command": COMMAND_KEY_LABEL },
+        "calendar_connected": secrets::get(CALENDAR_SECRET).is_some(),
         "version": env!("CARGO_PKG_VERSION"),
     })
 }
@@ -67,6 +68,83 @@ fn save_word(state: State<App>, word: Word) -> Res<Vec<Word>> {
 #[tauri::command]
 fn delete_word(state: State<App>, id: u64) -> Res<Vec<Word>> {
     state.store.delete_word(id)
+}
+
+#[tauri::command]
+fn snippets(state: State<App>) -> Vec<Snippet> {
+    state.store.snippets()
+}
+
+#[tauri::command]
+fn save_snippet(state: State<App>, snippet: Snippet) -> Res<Vec<Snippet>> {
+    state.store.save_snippet(snippet) // the engine re-reads snippets.json on its next request
+}
+
+#[tauri::command]
+fn delete_snippet(state: State<App>, id: u64) -> Res<Vec<Snippet>> {
+    state.store.delete_snippet(id)
+}
+
+#[tauri::command]
+fn pads(state: State<App>) -> Vec<Pad> {
+    state.store.pads()
+}
+
+#[tauri::command]
+fn save_pad(state: State<App>, pad: Pad) -> Res<Vec<Pad>> {
+    if pad.body.len() > 1_000_000 {
+        return Err("That pad is too large".into());
+    }
+    state.store.save_pad(pad)
+}
+
+#[tauri::command]
+fn delete_pad(state: State<App>, id: u64) -> Res<Vec<Pad>> {
+    state.store.delete_pad(id)
+}
+
+#[tauri::command]
+fn calendar_events(state: State<App>) -> Vec<calendar::Event> {
+    state.calendar.lock().unwrap().clone()
+}
+
+/// Checks the link works before storing it (in Windows Credential Manager, not settings.json).
+#[tauri::command]
+async fn connect_calendar(app: AppHandle, url: String) -> Res<usize> {
+    let url = url.trim().to_string();
+    blocking(move || {
+        let ics = calendar::fetch(&url)?;
+        if !ics.contains("BEGIN:VCALENDAR") {
+            return Err("That link isn't an iCal calendar. Copy the 'secret address in iCal format'.".into());
+        }
+        secrets::set(CALENDAR_SECRET, &url)?;
+        crate::refresh_calendar(&app)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn refresh_calendar(app: AppHandle) -> Res<usize> {
+    blocking(move || crate::refresh_calendar(&app)).await
+}
+
+#[tauri::command]
+fn disconnect_calendar(state: State<App>) {
+    secrets::delete(CALENDAR_SECRET);
+    state.calendar.lock().unwrap().clear();
+}
+
+/// How to connect an MCP client (Claude Code / Claude Desktop / others) to the read-only notes server.
+#[tauri::command]
+fn mcp_setup(state: State<App>) -> Value {
+    let root = sidecar::root();
+    let python = root.join(".venv").join("Scripts").join("python.exe").display().to_string();
+    let script = root.join("engine").join("mcp_notes.py").display().to_string();
+    let notes = state.store.dir.join("notes").display().to_string();
+    json!({
+        "claude_code": format!("claude mcp add nabra-notes -- \"{python}\" \"{script}\" --notes \"{notes}\""),
+        "json": { "mcpServers": { "nabra-notes": { "command": python, "args": [script, "--notes", notes] } } },
+    })
 }
 
 #[tauri::command]
@@ -171,6 +249,17 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         words,
         save_word,
         delete_word,
+        snippets,
+        save_snippet,
+        delete_snippet,
+        pads,
+        save_pad,
+        delete_pad,
+        calendar_events,
+        connect_calendar,
+        refresh_calendar,
+        disconnect_calendar,
+        mcp_setup,
         notes,
         note,
         delete_note,

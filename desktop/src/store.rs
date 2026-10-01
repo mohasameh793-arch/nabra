@@ -46,6 +46,37 @@ pub struct Settings {
     pub keep_clips: bool,
     /// The user has seen "tell people you're transcribing".
     pub notes_consent: bool,
+    /// Writing style per kind of app.
+    pub styles: Styles,
+    /// Ask to take notes when a calendar meeting starts.
+    pub meeting_prompts: bool,
+}
+
+/// "formal" | "casual" | "very_casual" for each kind of app (see keyboard::app_kind).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Styles {
+    pub personal: String,
+    pub work: String,
+    pub email: String,
+    pub other: String,
+}
+
+impl Default for Styles {
+    fn default() -> Self {
+        Self { personal: "casual".into(), work: "casual".into(), email: "formal".into(), other: "formal".into() }
+    }
+}
+
+impl Styles {
+    pub fn for_kind(&self, kind: &str) -> &str {
+        match kind {
+            "personal" => &self.personal,
+            "work" => &self.work,
+            "email" => &self.email,
+            _ => &self.other,
+        }
+    }
 }
 
 impl Default for Settings {
@@ -58,6 +89,8 @@ impl Default for Settings {
             microphone: None,
             keep_clips: false,
             notes_consent: false,
+            styles: Styles::default(),
+            meeting_prompts: true,
         }
     }
 }
@@ -73,6 +106,10 @@ impl Settings {
         }
         if self.mode != "clean" && self.mode != "raw" {
             return Err("Unknown mode".into());
+        }
+        let s = &self.styles;
+        if ![&s.personal, &s.work, &s.email, &s.other].iter().all(|v| ["formal", "casual", "very_casual"].contains(&v.as_str())) {
+            return Err("Unknown style".into());
         }
         Ok(())
     }
@@ -106,6 +143,49 @@ impl Word {
             _ => Err("Enter a word, or both sides of a replacement".into()),
         }
     }
+}
+
+// --- snippets & scratchpad ------------------------------------------------------------------
+
+/// Say `trigger`, get `text` (the engine reads snippets.json directly).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Snippet {
+    pub id: u64,
+    pub trigger: String,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Pad {
+    pub id: u64,
+    pub body: String,
+    pub updated: u64,
+}
+
+/// Insert-or-update by id (0 = new) in a JSON list file; returns the new list.
+fn upsert<T: Clone + Serialize + for<'de> Deserialize<'de>>(
+    path: &Path,
+    mut item: T,
+    id_of: impl Fn(&T) -> u64,
+    set_id: impl Fn(&mut T, u64),
+) -> Result<Vec<T>, String> {
+    let mut items: Vec<T> = read_json(path);
+    if id_of(&item) == 0 {
+        set_id(&mut item, now_ms());
+        items.insert(0, item);
+    } else if let Some(slot) = items.iter_mut().find(|x| id_of(x) == id_of(&item)) {
+        *slot = item;
+    } else {
+        return Err("That item no longer exists".into());
+    }
+    write_atomic(path, &serde_json::to_vec_pretty(&items).unwrap())?;
+    Ok(items)
+}
+
+fn remove<T: Serialize + for<'de> Deserialize<'de>>(path: &Path, id: u64, id_of: impl Fn(&T) -> u64) -> Result<Vec<T>, String> {
+    let items: Vec<T> = read_json::<Vec<T>>(path).into_iter().filter(|x| id_of(x) != id).collect();
+    write_atomic(path, &serde_json::to_vec_pretty(&items).unwrap())?;
+    Ok(items)
 }
 
 // --- history --------------------------------------------------------------------------------
@@ -207,6 +287,46 @@ impl Store {
         let words: Vec<Word> = self.words().into_iter().filter(|w| w.id != id).collect();
         write_atomic(&self.dictionary_path(), &serde_json::to_vec_pretty(&words).unwrap())?;
         Ok(words)
+    }
+
+    pub fn snippets_path(&self) -> PathBuf {
+        self.dir.join("snippets.json")
+    }
+
+    pub fn snippets(&self) -> Vec<Snippet> {
+        read_json(&self.snippets_path())
+    }
+
+    pub fn save_snippet(&self, s: Snippet) -> Result<Vec<Snippet>, String> {
+        let (t, x) = (s.trigger.trim(), s.text.trim());
+        if t.is_empty() || x.is_empty() || t.len() > 100 || x.len() > 20_000 {
+            return Err("A snippet needs a short trigger phrase and some text".into());
+        }
+        if self.snippets().iter().any(|o| o.id != s.id && o.trigger.trim().eq_ignore_ascii_case(t)) {
+            return Err("Another snippet already uses that trigger".into());
+        }
+        upsert(&self.snippets_path(), s, |s| s.id, |s, id| s.id = id)
+    }
+
+    pub fn delete_snippet(&self, id: u64) -> Result<Vec<Snippet>, String> {
+        remove(&self.snippets_path(), id, |s: &Snippet| s.id)
+    }
+
+    fn pads_path(&self) -> PathBuf {
+        self.dir.join("scratchpad.json")
+    }
+
+    pub fn pads(&self) -> Vec<Pad> {
+        read_json(&self.pads_path())
+    }
+
+    pub fn save_pad(&self, mut p: Pad) -> Result<Vec<Pad>, String> {
+        p.updated = now_ms();
+        upsert(&self.pads_path(), p, |p| p.id, |p, id| p.id = id)
+    }
+
+    pub fn delete_pad(&self, id: u64) -> Result<Vec<Pad>, String> {
+        remove(&self.pads_path(), id, |p: &Pad| p.id)
     }
 
     fn history_path(&self) -> PathBuf {
@@ -340,6 +460,28 @@ mod tests {
         let h = store.history();
         assert_eq!((h.len(), h[0].id, h[0].flagged), (2, 2, true));
         let _ = fs::remove_dir_all(&store.dir);
+    }
+
+    #[test]
+    fn snippets_validate_and_upsert() {
+        let store = temp_store("snip");
+        let list = store.save_snippet(Snippet { trigger: "my email".into(), text: "a@b.c".into(), ..Default::default() }).unwrap();
+        assert!(store.save_snippet(Snippet { trigger: "My Email".into(), text: "x".into(), ..Default::default() }).is_err());
+        let mut s = list[0].clone();
+        s.text = "new@b.c".into();
+        assert_eq!(store.save_snippet(s).unwrap()[0].text, "new@b.c");
+        assert!(store.delete_snippet(list[0].id).unwrap().is_empty());
+        let pads = store.save_pad(Pad { body: "draft".into(), ..Default::default() }).unwrap();
+        assert!(pads[0].id > 0 && pads[0].updated > 0);
+        let _ = fs::remove_dir_all(&store.dir);
+    }
+
+    #[test]
+    fn styles_validate() {
+        let mut s = Settings::default();
+        assert_eq!(s.styles.for_kind("email"), "formal");
+        s.styles.personal = "shouty".into();
+        assert!(s.validate().is_err());
     }
 
     #[test]

@@ -95,9 +95,15 @@ pub struct Meeting {
 }
 
 impl Meeting {
-    pub fn start(app: AppHandle, langs: String, mic: Option<String>) -> Result<Meeting, String> {
+    /// `title`: the calendar event's name when notes were started from a meeting prompt.
+    pub fn start(app: AppHandle, langs: String, mic: Option<String>, title: Option<String>) -> Result<Meeting, String> {
         let started_at = now_ms();
-        let note = Arc::new(Mutex::new(Note { id: format!("note-{started_at}"), started_at, ..Default::default() }));
+        let note = Arc::new(Mutex::new(Note {
+            id: format!("note-{started_at}"),
+            started_at,
+            title: title.unwrap_or_default(),
+            ..Default::default()
+        }));
         let stop = Arc::new(AtomicBool::new(false));
         let (phrase_tx, phrase_rx) = channel::<(Source, Vec<f32>, u32, f32)>();
         let (ready_tx, ready_rx) = channel();
@@ -182,8 +188,8 @@ pub fn summarize(app: &AppHandle, id: &str, language: Option<String>) -> Result<
     let lines = serde_json::to_value(&note.lines).map_err(|e| e.to_string())?;
     let (summary, title) = sidecar::summarize(&lines, language.as_deref())?;
     note.summary = Some(summary);
-    if !title.is_empty() {
-        note.title = title;
+    if note.title.is_empty() && !title.is_empty() {
+        note.title = title; // a calendar event's name wins over the AI's guess
     }
     state.store.save_note(&note)?;
     let _ = app.emit("note-updated", &note.id);

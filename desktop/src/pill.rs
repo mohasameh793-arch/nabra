@@ -17,10 +17,13 @@ pub enum View {
     /// Mouse over the capsule: mic + notes buttons with shortcut tooltips.
     Hover { notes_on: bool, talk_key: &'static str, notes_key: &'static str },
     Notes { seconds: u64 },
-    Listening { seconds: f32, level: f32, hands_free: bool },
+    /// `command`: Right Alt is held: the speech is an instruction, not text to insert.
+    Listening { seconds: f32, level: f32, hands_free: bool, command: bool },
     Working { label: String },
     Result { text: String, detail: String },
     Problem { message: String },
+    /// A calendar meeting is starting: offer to take notes.
+    Meeting { title: String },
 }
 
 impl View {
@@ -31,7 +34,7 @@ impl View {
             View::Hover { .. } => (300.0, 150.0),
             View::Notes { .. } => (170.0, 64.0),
             View::Listening { .. } | View::Working { .. } => (300.0, 64.0),
-            View::Result { .. } | View::Problem { .. } => (420.0, 84.0),
+            View::Result { .. } | View::Problem { .. } | View::Meeting { .. } => (420.0, 84.0),
         }
     }
 }

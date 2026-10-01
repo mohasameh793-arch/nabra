@@ -61,6 +61,7 @@ fn launch(job: HANDLE, exe: &Path, args: &[String], log: &Path) -> Result<(), St
 
 pub struct Launch<'a> {
     pub dictionary: &'a Path,
+    pub snippets: &'a Path,
     pub keep_clips: bool,
 }
 
@@ -80,6 +81,8 @@ pub fn start(opts: Launch) -> Result<(), String> {
         "8770".into(),
         "--dictionary".into(),
         opts.dictionary.display().to_string(),
+        "--snippets".into(),
+        opts.snippets.display().to_string(),
     ];
     let (llama, model) = (root.join(".assets/llama/llama-server.exe"), root.join(".assets/models/Qwen3-8B-Q4_K_M.gguf"));
     if llama.exists() && model.exists() {
@@ -134,14 +137,35 @@ pub struct Dictated {
     pub fixes: crate::store::Fixes,
 }
 
-/// `langs` comes from validated settings (lowercase ASCII codes and commas only).
-pub fn dictate(wav: &[u8], langs: &str, mode: &str) -> Result<Dictated, String> {
-    ureq::post(&format!("{ENGINE}/dictate?langs={langs}&mode={mode}"))
+/// `langs`, `mode` and `style` come from validated settings (ASCII words, commas, underscores only).
+pub fn dictate(wav: &[u8], langs: &str, mode: &str, style: &str) -> Result<Dictated, String> {
+    ureq::post(&format!("{ENGINE}/dictate?langs={langs}&mode={mode}&style={style}"))
         .timeout(Duration::from_secs(120))
         .send_bytes(wav)
         .map_err(explain)?
         .into_json()
         .map_err(|e| e.to_string())
+}
+
+/// A spoken command (Right Alt): what was said, and the engine's fixed action or "transform".
+pub fn instruction(wav: &[u8], langs: &str) -> Result<(String, String), String> {
+    let v: Value = ureq::post(&format!("{ENGINE}/instruction?langs={langs}"))
+        .timeout(Duration::from_secs(60))
+        .send_bytes(wav)
+        .map_err(explain)?
+        .into_json()
+        .map_err(|e| e.to_string())?;
+    Ok((v["instruction"].as_str().unwrap_or_default().into(), v["action"].as_str().unwrap_or("none").into()))
+}
+
+pub fn transform(text: &str, instruction: &str) -> Result<String, String> {
+    let v: Value = ureq::post(&format!("{ENGINE}/transform"))
+        .timeout(Duration::from_secs(180))
+        .send_json(json!({ "text": text, "instruction": instruction }))
+        .map_err(explain)?
+        .into_json()
+        .map_err(|e| e.to_string())?;
+    Ok(v["text"].as_str().unwrap_or_default().into())
 }
 
 pub fn note_chunk(wav: &[u8], langs: &str) -> Result<String, String> {

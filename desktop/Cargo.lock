@@ -1902,6 +1902,7 @@ dependencies = [
 name = "nabra"
 version = "2.0.0"
 dependencies = [
+ "chrono",
  "cpal",
  "serde",
  "serde_json",
