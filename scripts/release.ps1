@@ -84,4 +84,4 @@ SHA-256 of ``Nabra-Setup.exe``: ``$sha``
 gh release create "v$Version" dist\Nabra-Setup.exe dist\Nabra-Setup.exe.sha256 dist\latest.json `
     --repo $Repo --target main --title "Nabra $Version" --notes-file dist\notes.md --latest
 Check "gh release create"
-Write-Host "Released v$Version. Installed copies will update within ~6 hours (or via Settings → About → Check for updates)."
+Write-Host "Released v$Version. Installed copies (2.1.4+) offer it within 5 minutes."
