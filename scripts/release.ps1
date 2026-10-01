@@ -43,7 +43,7 @@ if ($LASTEXITCODE) { Pop-Location; throw "Rust tests failed" }
 Pop-Location
 
 git add -A
-git commit -q -m "Release v$Version"; Check "git commit"
+if (git status --porcelain) { git commit -q -m "Release v$Version"; Check "git commit" }  # a rerun after a stopped build has nothing to commit
 git push -q; Check "git push"
 
 # 3. Build + sign (the key file path is passed through the environment, never written anywhere).
