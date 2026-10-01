@@ -6,7 +6,7 @@ use tauri::{AppHandle, Manager, State};
 use crate::dictation::Control;
 use crate::keyboard::{COMMAND_KEY_LABEL, NOTES_KEY_LABEL, TALK_KEY_LABEL};
 use crate::store::{Dictation, Line, Note, NoteCard, Pad, Settings, Snippet, Word};
-use crate::{assets, calendar, keyboard, meeting, secrets, sidecar, sound, App, CALENDAR_SECRET};
+use crate::{assets, autostart, calendar, keyboard, meeting, secrets, sidecar, sound, App, CALENDAR_SECRET};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Emitter;
 
@@ -27,6 +27,7 @@ fn boot(state: State<App>) -> Value {
         "keys": { "talk": TALK_KEY_LABEL, "notes": NOTES_KEY_LABEL, "command": COMMAND_KEY_LABEL },
         "calendar_connected": secrets::get(CALENDAR_SECRET).is_some(),
         "setup_ready": assets::ready(),
+        "autostart": autostart::enabled(),
         "version": env!("CARGO_PKG_VERSION"),
     })
 }
@@ -36,6 +37,12 @@ fn save_settings(state: State<App>, settings: Settings) -> Res<()> {
     state.store.save_settings(&settings)?;
     *state.settings.lock().unwrap() = settings;
     Ok(())
+}
+
+#[tauri::command]
+fn set_autostart(on: bool) -> Res<bool> {
+    autostart::set(on)?;
+    Ok(autostart::enabled())
 }
 
 #[tauri::command]
@@ -326,6 +333,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         boot,
         save_settings,
         microphones,
+        set_autostart,
         history,
         edit_dictation,
         clear_history,

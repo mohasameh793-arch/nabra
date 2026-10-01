@@ -44,7 +44,9 @@ leaves your computer, it works offline, and it's free.
 ## Install
 
 1. Go to the **[Releases](../../releases)** page and download **`Nabra-Setup.exe`** from the latest release.
-2. Run it. It installs for your Windows user only (no admin rights needed).
+2. Run it. It installs for your Windows user only (no admin rights needed). The installer asks whether Nabra
+   should **start with Windows** (recommended, the default) and offers a **desktop shortcut** (ticked by default).
+   Both can be changed later in Settings → General.
 3. Windows may say *"Windows protected your PC"*, because the installer isn't code-signed yet. Click
    **More info → Run anyway**. You can check the download first: every release lists the file's SHA-256, and
    PowerShell's `Get-FileHash Nabra-Setup.exe` should print the same value.
@@ -120,7 +122,7 @@ that, a preview of what was typed. Clicking it never takes the cursor away from 
 | **Style** | Formal, casual or very casual writing for each kind of app: personal chats, work chats, email, everything else. Only capital letters and end punctuation change; your words never do. |
 | **Transforms** | How Right Alt editing works, the commands you can say, and a box to try them. |
 | **Scratchpad** | Autosaved drafts: click in, dictate, copy when ready. |
-| **Settings** | Name, appearance (light/dark), microphone, Clean/Raw mode, your languages, overview language, meeting reminders, calendar, AI connections, privacy, models. |
+| **Settings** | Name, appearance (light/dark), start with Windows, microphone, Clean/Raw mode, your languages, overview language, meeting reminders, calendar, AI connections, privacy, models. |
 
 **Clean vs Raw.** *Clean* (the default) fixes punctuation, technical terms and leftovers with the local AI, and a
 built-in guard rejects any AI edit that would translate, rewrite, drop your words or change numbers. *Raw* types

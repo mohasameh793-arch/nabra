@@ -13,6 +13,7 @@
     "windows": {
       "nsis": {
         "installMode": "currentUser",
+        "installerHooks": "installer-hooks.nsh",
         "displayLanguageSelector": false
       }
     }

@@ -31,6 +31,15 @@ async function body() {
       return [h("h2", {}, "General"),
         field("Your name", "Used for the greeting.", h("input", { type: "text", value: s.name, onchange: (e) => save({ name: e.target.value.trim() }) })),
         field("Appearance", null, theme),
+        field("Start with Windows", "Open Nabra in the background when you sign in, so your shortcuts always work.", (() => {
+          const t = h("input", { type: "checkbox", class: "switch", "aria-label": "Start with Windows", onchange: async (e) => {
+            state.boot.autostart = await call("set_autostart", { on: e.target.checked });
+            e.target.checked = state.boot.autostart;
+            toast(state.boot.autostart ? "Nabra will start with Windows" : "Nabra won't start with Windows");
+          } });
+          t.checked = state.boot.autostart;
+          return t;
+        })()),
         field("Dictate", "Hold to talk, release to insert. Or click the mic on the pill for hands-free.", h("span", {}, h("kbd", {}, state.boot.keys.talk))),
         field("Note taking", "Start or stop call notes from anywhere.", h("span", {}, h("kbd", {}, state.boot.keys.notes))),
         field("Commands & transforms", "Hold and speak: \"make it shorter\", \"scratch that\", \"new line\". Works on selected text or your last dictation.", h("span", {}, h("kbd", {}, state.boot.keys.command))),
