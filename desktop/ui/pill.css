@@ -19,45 +19,62 @@ body {
 body[data-view="idle"] .bar, body[data-view="hover"] .bar { display: none; }
 body:not([data-view="idle"]):not([data-view="hover"]) .dock { display: none; }
 
-/* ---- vertical capsule ---- */
-.dock { display: flex; align-items: center; gap: 10px; }
+/* ---- idle capsule + hover buttons (same layout as Wispr Flow's edge pill) ---- */
+.dock { display: flex; align-items: center; gap: 12px; }
 .capsule {
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
-  background: var(--ink); border: 1.5px solid var(--rim); border-radius: 999px;
-  width: 12px; height: 60px; padding: 0; overflow: hidden;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
-  transition: width 140ms ease, height 140ms ease, padding 140ms ease;
+  width: 9px; height: 40px; border-radius: 999px; background: rgba(17, 17, 16, 0.55);
+  border: 1.5px solid var(--rim); box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
 }
-.capsule .round { display: none; }
-body[data-view="hover"] .capsule { width: 50px; height: 108px; padding: 6px 0; }
-body[data-view="hover"] .capsule .round { display: grid; }
+.stack { display: none; flex-direction: column; align-items: flex-end; gap: 7px; }
+body[data-view="hover"] .capsule { display: none; }
+body[data-view="hover"] .stack { display: flex; animation: pop 140ms ease-out; }
+.row { position: relative; display: flex; align-items: center; gap: 3px; }
 
-.round {
-  place-items: center; width: 38px; height: 38px; border-radius: 50%; border: 0; padding: 0;
-  background: transparent; cursor: pointer;
+.btn {
+  display: grid; place-items: center; border: 1px solid rgba(255, 255, 255, 0.16); padding: 0; cursor: pointer;
+  background: var(--ink); box-shadow: 0 3px 10px rgba(0, 0, 0, 0.35); transition: background 120ms ease;
 }
-.round svg { width: 22px; height: 22px; fill: var(--fg); stroke: var(--fg); }
-.round:hover, .round:focus-visible { background: rgba(255, 255, 255, 0.12); outline: none; }
+.btn.mic { width: 28px; height: 42px; border-radius: 14px; }
+.btn.rec { width: 28px; height: 28px; border-radius: 50%; }
+.btn svg { width: 15px; height: 15px; fill: var(--fg); stroke: var(--fg); }
+.btn:hover, .btn:focus-visible { background: #3a3936; outline: none; }
 #notes.on .core { fill: var(--rec); }
 #notes.on svg { stroke: var(--rec); }
+.chev {
+  width: 16px; height: 28px; border: 0; padding: 0; background: none; cursor: pointer;
+  color: var(--muted); font: 600 15px/1 "Segoe UI", sans-serif;
+}
+.chev:hover, .chev.open { color: var(--fg); }
 
-/* tooltips to the left of the capsule */
-.tips { position: relative; width: 220px; height: 108px; display: none; }
-body[data-view="hover"] .tips { display: block; }
+/* one-line tips to the left of the button */
 .tip {
-  position: absolute; right: 0; display: none; flex-direction: column; gap: 2px; align-items: flex-end;
-  background: var(--ink); border: 1px solid var(--rim-soft); border-radius: 10px; padding: 7px 10px;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.32); white-space: nowrap;
+  position: absolute; right: calc(100% + 8px); top: 50%; transform: translate(4px, -50%); opacity: 0;
+  pointer-events: none; white-space: nowrap; font-size: 12.5px;
+  background: var(--ink); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 999px; padding: 5px 12px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35); transition: opacity 120ms ease, transform 120ms ease;
 }
-.tip.show { display: flex; }
-#tip-mic { top: 10px; }
-#tip-notes { bottom: 10px; }
-.tip b { font-weight: 600; }
-.tip span { color: var(--muted); font-size: 12px; }
-kbd {
-  font: 600 11px/1 "Segoe UI", sans-serif; color: var(--fg);
-  background: rgba(255, 255, 255, 0.12); border-radius: 5px; padding: 2px 5px;
+.tip.show { opacity: 1; transform: translate(0, -50%); }
+.tip b { font-weight: 700; }
+body.panel-open .tip { display: none; }
+
+/* upcoming meetings card */
+.panel {
+  width: 236px; padding: 18px 16px 16px; border-radius: 16px; text-align: center;
+  background: #1a1a19; border: 1px solid rgba(255, 255, 255, 0.08); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  animation: pop 140ms ease-out;
 }
+.panel svg { width: 22px; height: 22px; stroke: var(--fg); fill: none; stroke-width: 1.6; }
+.panel h4 { margin: 8px 0 12px; font-size: 13px; font-weight: 600; }
+.panel ul { list-style: none; margin: 0 0 12px; padding: 0; text-align: left; display: grid; gap: 6px; }
+.panel li { display: flex; gap: 8px; font-size: 12.5px; }
+.panel li time { color: var(--muted); font-variant-numeric: tabular-nums; flex: none; }
+.panel li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; unicode-bidi: plaintext; }
+.panel button {
+  border: 0; border-radius: 8px; padding: 7px 14px; cursor: pointer;
+  background: #fbf8ef; color: var(--ink); font: 600 12px "Segoe UI", sans-serif;
+}
+.panel button:hover { background: #fff; }
+@keyframes pop { from { opacity: 0; transform: scale(0.96); } }
 
 /* ---- horizontal bar ---- */
 .bar {
@@ -100,6 +117,7 @@ body[data-view="listening"] .msg, body[data-view="notes"] .msg { color: var(--mu
 
 /* meeting prompt + command mode */
 body[data-view="meeting"] .dot { background: var(--rec); }
+body[data-view="update"] .dot { background: var(--ok); }
 body[data-view="listening"].command .levels i { background: var(--ok); }
 .take { border: 0; border-radius: 999px; padding: 6px 12px; font: 600 12.5px "Segoe UI", sans-serif; cursor: pointer;
   background: var(--fg); color: var(--ink); white-space: nowrap; flex: none; }

@@ -24,17 +24,19 @@ pub enum View {
     Problem { message: String },
     /// A calendar meeting is starting: offer to take notes.
     Meeting { title: String },
+    /// A new version is ready: offer to update.
+    Update { version: String },
 }
 
 impl View {
     /// Window size in logical pixels; content is right-aligned inside it.
     fn size(&self) -> (f64, f64) {
         match self {
-            View::Idle => (30.0, 92.0),
-            View::Hover { .. } => (300.0, 150.0),
+            View::Idle => (24.0, 64.0),
+            View::Hover { .. } => (330.0, 210.0), // room for a tip or the meetings card
             View::Notes { .. } => (170.0, 64.0),
             View::Listening { .. } | View::Working { .. } => (300.0, 64.0),
-            View::Result { .. } | View::Problem { .. } | View::Meeting { .. } => (420.0, 84.0),
+            View::Result { .. } | View::Problem { .. } | View::Meeting { .. } | View::Update { .. } => (420.0, 84.0),
         }
     }
 }

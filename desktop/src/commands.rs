@@ -29,6 +29,7 @@ fn boot(state: State<App>) -> Value {
         "setup_ready": assets::ready(),
         "autostart": autostart::enabled(),
         "version": env!("CARGO_PKG_VERSION"),
+        "update": state.update.lock().unwrap().as_ref().map(|u| u.version.clone()),
     })
 }
 
@@ -48,7 +49,12 @@ fn set_autostart(on: bool) -> Res<bool> {
 /// Settings → About → Check for updates. Installs right away if one exists (Nabra restarts).
 #[tauri::command]
 async fn check_updates(app: AppHandle) -> Res<crate::updater::Status> {
-    crate::updater::run_once(&app).await
+    crate::updater::check(&app).await
+}
+
+#[tauri::command]
+async fn install_update(app: AppHandle) -> Res<()> {
+    crate::updater::install(&app).await
 }
 
 #[tauri::command]
@@ -352,6 +358,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         save_settings,
         microphones,
         check_updates,
+        install_update,
         set_autostart,
         history,
         edit_dictation,

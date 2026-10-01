@@ -6,19 +6,25 @@
 <link rel="stylesheet" href="pill.css">
 </head>
 <body>
-  <!-- Idle + hover: the vertical capsule with Dictate / Notes buttons -->
+  <!-- Idle: a thin outlined capsule. Hover: two small separate buttons (mic; record + ›) with one-line tips. -->
   <div class="dock" id="dock">
-    <div class="tips" aria-hidden="true">
-      <div class="tip" id="tip-mic"><b>Dictate</b><span>Hold <kbd id="key-talk">Right Ctrl</kbd> · or click</span></div>
-      <div class="tip" id="tip-notes"><b id="notes-label">Start note taking</b><span>Press <kbd id="key-notes">Ctrl+Alt+N</kbd> · or click</span></div>
-    </div>
-    <div class="capsule" id="capsule">
-      <button class="round" id="mic" aria-label="Dictate" data-tip="tip-mic">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" fill="none" stroke-width="1.8" stroke-linecap="round"/></svg>
-      </button>
-      <button class="round" id="notes" aria-label="Start note taking" data-tip="tip-notes">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.2" fill="none" stroke-width="1.8"/><circle class="core" cx="12" cy="12" r="4.4"/></svg>
-      </button>
+    <div class="panel" id="panel" hidden></div>
+    <div class="capsule" id="capsule"></div>
+    <div class="stack" id="stack">
+      <div class="row">
+        <span class="tip" id="tip-mic">Dictate <b id="key-talk">Right Ctrl</b></span>
+        <button class="btn mic" id="mic" aria-label="Dictate" data-tip="tip-mic">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" fill="none" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <div class="row">
+        <span class="tip" id="tip-notes"><span id="notes-label">Start notes</span> <b id="key-notes">Ctrl+Alt+N</b></span>
+        <span class="tip" id="tip-cal">Upcoming meetings</span>
+        <button class="chev" id="chev" aria-label="Upcoming meetings" data-tip="tip-cal">‹</button>
+        <button class="btn rec" id="notes" aria-label="Start notes" data-tip="tip-notes">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke-width="2"/><circle class="core" cx="12" cy="12" r="4.2"/></svg>
+        </button>
+      </div>
     </div>
   </div>
 

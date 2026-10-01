@@ -128,9 +128,9 @@ async function body() {
       const e = state.boot.engine;
       return [h("h2", {}, "About Nabra"),
         field("Version", null, h("span", {}, state.boot.version)),
-        field("Install updates automatically", "New versions download in the background and install when you're not dictating or in a meeting. Updates are signed, so only official releases install.", (() => {
-          const t = h("input", { type: "checkbox", class: "switch", "aria-label": "Install updates automatically",
-            onchange: (ev) => save({ auto_update: ev.target.checked }, ev.target.checked ? "Automatic updates on" : "Automatic updates off") });
+        field("Check for updates automatically", "Nabra checks every few hours and tells you when a new version is ready. Nothing installs until you click Update. Updates are signed, so only official releases install.", (() => {
+          const t = h("input", { type: "checkbox", class: "switch", "aria-label": "Check for updates automatically",
+            onchange: (ev) => save({ auto_update: ev.target.checked }, ev.target.checked ? "Update checks on" : "Update checks off") });
           t.checked = s.auto_update;
           return t;
         })()),
@@ -139,7 +139,7 @@ async function body() {
           ev.target.textContent = "Checking…";
           try {
             const r = await call("check_updates");
-            toast(r.status === "up_to_date" ? `You're on the latest version (${r.version})` : `Installing ${r.version}… Nabra will reopen`);
+            toast(r.status === "up_to_date" ? `You're on the latest version (${r.version})` : `Nabra ${r.version} is available`);
           } finally {
             ev.target.disabled = false;
             ev.target.textContent = "Check for updates";

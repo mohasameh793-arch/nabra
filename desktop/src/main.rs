@@ -45,6 +45,8 @@ pub struct App {
     pub busy: AtomicBool,
     /// Set after an automatic update, to tell the user once.
     pub updated_to: Mutex<Option<String>>,
+    /// A newer signed release found by the updater, waiting for the user to click Update.
+    pub update: Mutex<Option<tauri_plugin_updater::Update>>,
 }
 
 impl App {
@@ -214,6 +216,7 @@ fn main() {
                 pending_title: Mutex::new(None),
                 busy: AtomicBool::new(false),
                 updated_to: Mutex::new(updated_to),
+                update: Mutex::new(None),
             });
             updater::watch(app.handle().clone());
             let watcher = app.handle().clone();

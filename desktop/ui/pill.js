@@ -23,8 +23,11 @@ function render(v) {
       $("key-talk").textContent = v.talk_key;
       $("key-notes").textContent = v.notes_key;
       $("notes").classList.toggle("on", v.notes_on);
-      $("notes-label").textContent = v.notes_on ? "Stop note taking" : "Start note taking";
+      $("notes-label").textContent = v.notes_on ? "Stop notes" : "Start notes";
       $("notes").setAttribute("aria-label", $("notes-label").textContent);
+      break;
+    case "idle":
+      closePanel();
       break;
     case "notes":
       $("clock").textContent = clock(v.seconds);
@@ -43,6 +46,15 @@ function render(v) {
       break;
     case "meeting":
       $("msg").textContent = `${v.title} is starting`;
+      $("take").textContent = "Take notes";
+      $("take").dataset.action = "notes";
+      $("take").hidden = false;
+      $("dismiss").hidden = false;
+      break;
+    case "update":
+      $("msg").textContent = `Nabra ${v.version} is available`;
+      $("take").textContent = "Update";
+      $("take").dataset.action = "update";
       $("take").hidden = false;
       $("dismiss").hidden = false;
       break;
@@ -84,17 +96,41 @@ document.documentElement.addEventListener("mouseleave", () => {
   }, 300);
 });
 
-for (const btn of [$("mic"), $("notes")]) {
+for (const btn of [$("mic"), $("notes"), $("chev")]) {
   btn.addEventListener("mouseenter", () => $(btn.dataset.tip).classList.add("show"));
   btn.addEventListener("mouseleave", () => $(btn.dataset.tip).classList.remove("show"));
 }
 $("mic").addEventListener("click", () => invoke("pill_mic"));
 $("notes").addEventListener("click", () => invoke("pill_notes"));
-$("take").addEventListener("click", () => invoke("pill_notes"));
+
+// › : today's remaining calendar meetings, or a prompt to connect a calendar.
+const CAL_ICON = '<svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>';
+function closePanel() {
+  $("panel").hidden = true;
+  $("chev").classList.remove("open");
+  document.body.classList.remove("panel-open");
+}
+$("chev").addEventListener("click", async () => {
+  if (!$("panel").hidden) return closePanel();
+  const [events, boot] = await Promise.all([invoke("calendar_events"), invoke("boot")]);
+  const now = Date.now(), midnight = new Date().setHours(24, 0, 0, 0);
+  const today = events.filter((e) => !e.all_day && e.end > now && e.start < midnight).slice(0, 4);
+  const time = (ms) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const esc = (t) => t.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
+  $("panel").innerHTML = today.length
+    ? `<h4>Upcoming meetings</h4><ul>${today.map((e) => `<li><time>${time(e.start)}</time><span>${esc(e.title)}</span></li>`).join("")}</ul>`
+    : `${CAL_ICON}<h4>${boot.calendar_connected ? "You’re all done for today" : "No upcoming meetings"}</h4>` +
+      (boot.calendar_connected ? "" : `<button id="cal-connect">Connect calendar</button>`);
+  $("cal-connect")?.addEventListener("click", () => { closePanel(); invoke("open_hub", { page: "settings:calendar" }); });
+  $("panel").hidden = false;
+  $("chev").classList.add("open");
+  document.body.classList.add("panel-open");
+});
+$("take").addEventListener("click", () => invoke($("take").dataset.action === "update" ? "install_update" : "pill_notes").catch(() => {}));
 $("dismiss").addEventListener("click", () => invoke("pill_dismiss"));
 $("stop").addEventListener("click", () => invoke($("stop").dataset.action === "notes" ? "pill_notes" : "pill_mic"));
-// Double-click the capsule to open the Nabra window.
-$("capsule").addEventListener("dblclick", () => invoke("open_hub", { page: null }));
+// Double-click the mic button to open the Nabra window.
+$("mic").addEventListener("dblclick", () => invoke("open_hub", { page: null }));
 
 window.__TAURI__.event.listen("pill", (e) => render(e.payload));
 render({ view: "idle" });

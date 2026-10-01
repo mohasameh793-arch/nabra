@@ -58,11 +58,34 @@ document.addEventListener("settings-changed", () => PAGES[current].render());
 document.addEventListener("history-cleared", () => PAGES[current].render());
 
 // ---------- backend events ----------
-listen("goto", (e) => go(e.payload));
+// "settings:<section>" opens the settings dialog (e.g. from the pill's "Connect calendar").
+listen("goto", (e) => (e.payload.startsWith("settings:") ? openSettings(e.payload.slice(9)) : go(e.payload)));
 listen("dictation", (e) => { dictation.added(e.payload); if (current === "insights") insights.render(); });
 listen("engine", (e) => { state.boot.engine = e.payload; });
 notetaker.wire();
 setup.wire();
+
+// ---------- update banner: "Nabra X is available · Update" → progress → restart ----------
+const banner = h("div", { class: "update-banner", hidden: true, role: "status" });
+document.body.append(banner);
+function showUpdate(u) {
+  banner.hidden = false;
+  if (u.status === "available") {
+    banner.replaceChildren(h("span", {}, "Nabra ", h("b", {}, u.version), " is available"),
+      h("button", { class: "btn primary", onclick: () => call("install_update").catch(() => {}) }, "Update"),
+      h("button", { class: "x", "aria-label": "Later", onclick: () => (banner.hidden = true) }, "✕"));
+  } else if (u.status === "downloading") {
+    banner.replaceChildren(h("span", {}, `Updating to ${u.version}… ${u.percent}%`),
+      h("div", { class: "bar" }, h("i", { style: `width:${u.percent}%` })));
+  } else if (u.status === "installing") {
+    banner.replaceChildren(h("span", {}, "Installing… Nabra will restart"), h("div", { class: "bar" }, h("i", { style: "width:100%" })));
+  } else if (u.status === "failed") {
+    banner.replaceChildren(h("span", {}, u.message),
+      h("button", { class: "btn", onclick: () => call("install_update").catch(() => {}) }, "Try again"),
+      h("button", { class: "x", "aria-label": "Close", onclick: () => (banner.hidden = true) }, "✕"));
+  }
+}
+listen("update", (e) => showUpdate(e.payload));
 
 // ---------- boot ----------
 (async () => {
@@ -75,4 +98,5 @@ setup.wire();
   }
   go(state.boot.setup_ready ? location.hash.slice(1) || "dictation" : "setup");
   drawNotifications();
+  if (state.boot.update) showUpdate({ status: "available", version: state.boot.update });
 })().catch((e) => toast(`Couldn't load Nabra: ${e}`));

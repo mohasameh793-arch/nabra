@@ -29,6 +29,11 @@ pub enum Control {
     MeetingStarting(String),
     /// The user closed a result or meeting prompt on the pill.
     Dismiss,
+    /// The updater found a new version: offer it on the pill.
+    UpdateAvailable(String),
+    /// Update progress ("Updating Nabra… 40%").
+    Updating(String),
+    UpdateFailed(String),
     /// First-run downloads finished: start the engine.
     SetupDone,
     /// Something outside changed (e.g. notes started from the hub): re-render the pill.
@@ -39,6 +44,8 @@ const TOO_SHORT_S: f32 = 0.3;
 const RESULT_FOR: Duration = Duration::from_millis(2600);
 const PROBLEM_FOR: Duration = Duration::from_secs(5);
 const MEETING_PROMPT_FOR: Duration = Duration::from_secs(90);
+const UPDATE_PROMPT_FOR: Duration = Duration::from_secs(120);
+const UPDATING_FOR: Duration = Duration::from_secs(600);
 
 struct Take {
     tap: Tap,
@@ -346,10 +353,15 @@ impl Controller {
                 Ok(Control::MeetingStarting(title)) if self.take.is_none() => {
                     self.flash(View::Meeting { title }, MEETING_PROMPT_FOR)
                 }
+                Ok(Control::UpdateAvailable(version)) if self.take.is_none() => {
+                    self.flash(View::Update { version }, UPDATE_PROMPT_FOR)
+                }
+                Ok(Control::Updating(label)) => self.flash(View::Working { label }, UPDATING_FOR),
+                Ok(Control::UpdateFailed(message)) => self.problem(message),
                 Ok(Control::Hover(on)) => {
                     self.hovering = on;
                     if self.take.is_none() {
-                        if on && !matches!(self.shown, Some(View::Meeting { .. })) {
+                        if on && !matches!(self.shown, Some(View::Meeting { .. } | View::Update { .. } | View::Working { .. })) {
                             self.hold_until = None; // hovering dismisses a lingering result (not a meeting prompt)
                         }
                         self.rest();
