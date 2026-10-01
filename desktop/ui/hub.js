@@ -68,12 +68,14 @@ setup.wire();
 // ---------- update banner: "Nabra X is available · Update" → progress → restart ----------
 const banner = h("div", { class: "update-banner", hidden: true, role: "status" });
 document.body.append(banner);
+let laterFor = null; // the version the user closed the banner for; repeat checks don't reopen it
 function showUpdate(u) {
+  if (u.status === "available" && u.version === laterFor) return;
   banner.hidden = false;
   if (u.status === "available") {
     banner.replaceChildren(h("span", {}, "Nabra ", h("b", {}, u.version), " is available"),
       h("button", { class: "btn primary", onclick: () => call("install_update").catch(() => {}) }, "Update"),
-      h("button", { class: "x", "aria-label": "Later", onclick: () => (banner.hidden = true) }, "✕"));
+      h("button", { class: "x", "aria-label": "Later", onclick: () => { banner.hidden = true; laterFor = u.version; } }, "✕"));
   } else if (u.status === "downloading") {
     banner.replaceChildren(h("span", {}, `Updating to ${u.version}… ${u.percent}%`),
       h("div", { class: "bar" }, h("i", { style: `width:${u.percent}%` })));

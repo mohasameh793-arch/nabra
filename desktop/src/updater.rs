@@ -14,8 +14,10 @@ use tauri_plugin_updater::UpdaterExt;
 use crate::dictation::Control;
 use crate::App;
 
-const FIRST_CHECK: Duration = Duration::from_secs(60);
-const EVERY: Duration = Duration::from_secs(6 * 60 * 60);
+// latest.json is a tiny file on GitHub's CDN, so checking often costs nothing, and the pill offers each
+// version only once.
+const FIRST_CHECK: Duration = Duration::from_secs(20);
+const EVERY: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Clone, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
@@ -102,7 +104,7 @@ async fn sleep(d: Duration) {
     let _ = tauri::async_runtime::spawn_blocking(move || std::thread::sleep(d)).await;
 }
 
-/// Background loop: first check a minute after start, then every 6 hours (Settings → "Check for updates
+/// Background loop: first check 20 s after start, then every 5 minutes (Settings → "Check for updates
 /// automatically").
 pub fn watch(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
