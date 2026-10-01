@@ -49,15 +49,15 @@ def main() -> None:
     pngs = [(s, shot(page(icon, s, s), s, s, out / f"app-icon-{s}.png")) for s in ICON_SIZES]
     target = HERE.parent / "desktop" / "icons" / "icon.ico"
     target.write_bytes(ico([p for p in pngs if p[0] in (16, 24, 32, 48, 256)]))
-    shot(page(HERE / "nabra-logo.svg", 840, 192), 840, 192, out / "logo-light.png")
-    shot(page(HERE / "nabra-logo-dark.svg", 840, 192), 840, 192, out / "logo-dark.png")
+    shot(page(HERE / "nabra-logo.svg", 708, 220), 708, 220, out / "logo-light.png")
+    shot(page(HERE / "nabra-logo-dark.svg", 708, 220), 708, 220, out / "logo-dark.png")
 
     # GitHub social preview (Settings → Social preview): 1280×640.
     card = f"""<!doctype html><meta charset='utf-8'><style>
       html,body{{margin:0;width:1280px;height:640px;background:#141413;overflow:hidden;font-family:'Segoe UI',sans-serif}}
       .wrap{{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:center;padding:0 110px;gap:30px;
         background:radial-gradient(60% 80% at 92% 20%,rgba(43,179,163,.28),transparent 60%),radial-gradient(50% 70% at 80% 110%,rgba(245,168,61,.18),transparent 60%)}}
-      img{{width:840px;height:192px;margin-left:-6px}}
+      img{{width:531px;height:165px}}
       p{{margin:0;color:#d9d6cf;font-size:34px;line-height:1.35;max-width:980px}}
       small{{color:#9b968d;font-size:24px}}
     </style><div class='wrap'><img src='{(HERE / "nabra-logo-dark.svg").as_uri()}'>

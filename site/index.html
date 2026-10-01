@@ -32,8 +32,6 @@ a{color:inherit}
 .btn{display:inline-flex;align-items:center;gap:8px;padding:10px 18px;border-radius:10px;background:var(--mint);border:1.5px solid var(--ink);color:var(--ink);font:600 14px var(--sans);text-decoration:none;cursor:pointer;transition:transform .25s var(--ease),box-shadow .25s}
 .btn:hover{transform:translateY(-2px);box-shadow:0 3px 0 var(--ink)}
 .btn svg{width:15px;height:15px}
-.mark path{fill:none;stroke:currentColor;stroke-width:12;stroke-linecap:round;stroke-linejoin:round}
-.mark circle{fill:var(--teal)}
 
 /* banner + nav */
 .banner{background:var(--green);color:#E8F3F0;text-align:center;font-size:13px;padding:9px 16px;font-weight:500}
@@ -41,7 +39,7 @@ a{color:inherit}
 header{position:sticky;top:12px;z-index:60;display:flex;justify-content:center;margin-top:14px;pointer-events:none}
 .nav{pointer-events:auto;display:flex;align-items:center;gap:4px;padding:6px 6px 6px 14px;border-radius:12px;background:rgba(255,255,255,.88);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:1px solid #E6E1D3;width:min(760px,calc(100% - 32px))}
 .brand{display:flex;align-items:center;gap:7px;font-weight:800;font-size:16px;text-decoration:none;margin-right:10px}
-.brand svg{width:30px;height:17px}
+.brand svg{width:84px;height:26px;display:block}
 .seg{display:flex;background:#F2EFE6;border-radius:8px;padding:3px}
 .seg a{padding:5px 11px;border-radius:6px;text-decoration:none;font-size:13px;color:var(--muted);font-weight:500}
 .seg a.on{background:#fff;color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.08)}
@@ -220,7 +218,7 @@ header{position:sticky;top:12px;z-index:60;display:flex;justify-content:center;m
 .bub.q{align-self:flex-end;background:transparent;color:var(--muted);text-align:right}
 .bub.a{align-self:flex-start;background:#fff;margin-top:10px;min-height:40px}
 .av{width:26px;height:26px;border-radius:50%;background:var(--green);display:grid;place-items:center;margin-top:8px}
-.av svg{width:16px;height:9px;color:#fff}
+.av svg{width:15px;height:15px;color:#fff}
 
 /* cta */
 .cta{width:min(1240px,calc(100% - 32px));margin:0 auto;height:min(82vh,640px);border-radius:28px;display:grid;place-items:center;text-align:center;color:#fff}
@@ -245,19 +243,19 @@ header{position:sticky;top:12px;z-index:60;display:flex;justify-content:center;m
 .fcols a{display:block;text-decoration:none;padding:2px 0;color:#3B3936}
 .fcols a:hover{color:var(--ink);text-decoration:underline}
 .giant{width:min(1080px,94vw);margin:70px auto 0;display:flex;align-items:center;gap:3vw;color:var(--ink)}
-.giant svg{width:30%;height:auto;flex:none}
-.giant svg path{stroke-dasharray:400;stroke-dashoffset:400;transition:stroke-dashoffset 2s var(--ease)}
-.giant svg circle{transform-box:fill-box;transform-origin:center;transform:scale(0);transition:transform .7s 1.6s cubic-bezier(.3,1.7,.4,1)}
-.giant.in svg path{stroke-dashoffset:0}
-.giant.in svg circle{transform:scale(1);animation:hop 2.4s 2.4s ease-in-out infinite}
-@keyframes hop{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-22%)}}
-.giant b{font:800 clamp(80px,17vw,250px)/.8 var(--sans);letter-spacing:-.05em}
+.giant svg{width:100%;height:auto}
+.giant .gb{transform-box:fill-box;transform-origin:50% 100%;transform:scaleY(0);transition:transform .9s var(--ease)}
+.giant .gb:nth-of-type(2){transition-delay:.08s}.giant .gb:nth-of-type(3){transition-delay:.16s}.giant .gb:nth-of-type(4){transition-delay:.24s}.giant .gb:nth-of-type(5){transition-delay:.32s}
+.giant .gd{transform-box:fill-box;transform-origin:center;transform:scale(0);transition:transform .6s .7s cubic-bezier(.3,1.7,.4,1)}
+.giant .ge{opacity:0;transform:translateY(20px);transition:opacity 1s .9s var(--ease),transform 1s .9s var(--ease)}
+.giant.in .gb,.giant.in .gd{transform:none}
+.giant.in .ge{opacity:1;transform:none}
 .legal{width:min(980px,92vw);margin:40px auto 0;padding:20px 0 34px;display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;font-size:11.5px;color:var(--muted)}
 .legal a{text-decoration:none;margin-right:12px}
 
 .fab{position:fixed;left:18px;bottom:18px;z-index:70;width:44px;height:44px;border-radius:50%;background:var(--mint);border:1.5px solid var(--ink);display:grid;place-items:center;box-shadow:0 6px 18px -8px rgba(0,0,0,.4);transition:transform .25s var(--ease)}
 .fab:hover{transform:scale(1.08)}
-.fab svg{width:24px;height:14px}
+.fab svg{width:22px;height:21px}
 
 .rv{opacity:0;transform:translateY(30px);transition:opacity .9s var(--ease),transform .9s var(--ease)}
 .rv.in{opacity:1;transform:none}
@@ -268,11 +266,12 @@ header{position:sticky;top:12px;z-index:60;display:flex;justify-content:center;m
 </style>
 </head>
 <body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><symbol id="nm" viewBox="0 0 114 110"><rect x="14" y="48" width="17" height="24" rx="8.5" fill="none" stroke="currentColor" stroke-width="11"/><circle cx="16.5" cy="31" r="5.5" fill="currentColor"/><circle cx="29.5" cy="31" r="5.5" fill="currentColor"/><rect x="48" y="48" width="12" height="54" rx="6" fill="currentColor"/><path d="M68 76 V36 A6 6 0 0 1 80 36 V76 Q80 78 78 78 H70 Q68 78 68 76Z" fill="currentColor"/><path d="M74 36 L94 72" stroke="currentColor" stroke-width="12" stroke-linecap="round"/><path d="M88 76 V36 A6 6 0 0 1 100 36 V76 Q100 78 98 78 H90 Q88 78 88 76Z" fill="currentColor"/><circle cx="74" cy="92" r="6.5" fill="#2BB3A3"/><circle cx="94" cy="17" r="6.5" fill="#2BB3A3"/></symbol><symbol id="nl" viewBox="0 0 354 110"><rect x="14" y="48" width="17" height="24" rx="8.5" fill="none" stroke="currentColor" stroke-width="11"/><circle cx="16.5" cy="31" r="5.5" fill="currentColor"/><circle cx="29.5" cy="31" r="5.5" fill="currentColor"/><rect x="48" y="48" width="12" height="54" rx="6" fill="currentColor"/><path d="M68 76 V36 A6 6 0 0 1 80 36 V76 Q80 78 78 78 H70 Q68 78 68 76Z" fill="currentColor"/><path d="M74 36 L94 72" stroke="currentColor" stroke-width="12" stroke-linecap="round"/><path d="M88 76 V36 A6 6 0 0 1 100 36 V76 Q100 78 98 78 H90 Q88 78 88 76Z" fill="currentColor"/><circle cx="74" cy="92" r="6.5" fill="#2BB3A3"/><circle cx="94" cy="17" r="6.5" fill="#2BB3A3"/><svg x="128" y="12" width="222" height="66" viewBox="0 0 262 78"><g fill="none" stroke="currentColor" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"><path d="M6 72 V54 A18 18 0 0 1 42 54 V72"/><circle cx="82" cy="54" r="18"/><path d="M100 36 V72"/><path d="M122 6 V72"/><circle cx="140" cy="54" r="18"/><path d="M180 72 V54 A18 18 0 0 1 198 36"/><circle cx="238" cy="54" r="18"/><path d="M256 36 V72"/></g></svg></symbol></defs></svg>
 
 <div class="banner">Nabra 2.1 is here: a new look and automatic updates.<a href="https://github.com/mohasameh793-arch/nabra/releases/latest">See what’s new ›</a></div>
 
 <header><nav class="nav" aria-label="Main">
-  <a class="brand" href="#top" aria-label="Nabra home"><svg class="mark" viewBox="6 24 116 64" aria-hidden="true"><path d="M14 80 V50 C14 26 48 26 48 50 V58 C48 88 114 88 114 58 V52"/><circle cx="81" cy="46" r="7.5"/></svg>Nabra</a>
+  <a class="brand" href="#top" aria-label="Nabra home"><svg class="lockup" viewBox="0 0 354 110" aria-hidden="true"><use href="#nl"/></svg></a>
   <div class="seg"><a class="on" href="#top">Dictation</a><a href="#how">Notetaker</a></div>
   <span class="sp"></span>
   <a class="lk" href="#privacy">Privacy</a><a class="lk" href="#faq">FAQ</a><a class="lk" href="https://github.com/mohasameh793-arch/nabra">GitHub</a>
@@ -427,11 +426,11 @@ header{position:sticky;top:12px;z-index:60;display:flex;justify-content:center;m
     <div><h5>PROJECT</h5><a href="https://github.com/mohasameh793-arch/nabra">Source code</a><a href="https://github.com/mohasameh793-arch/nabra/releases">Releases</a><a href="https://github.com/mohasameh793-arch/nabra/issues">Report a bug</a><a href="https://github.com/mohasameh793-arch/nabra/blob/main/LICENSE">MIT License</a></div>
     <div><h5>COMMUNITY</h5><a href="https://github.com/mohasameh793-arch/nabra/issues/new">Request a feature</a><a href="https://github.com/mohasameh793-arch/nabra/fork">Contribute</a><a href="https://github.com/mohasameh793-arch/nabra/stargazers">Star on GitHub</a></div>
   </div>
-  <div class="giant" id="giant"><svg class="mark" viewBox="6 24 116 64" aria-hidden="true"><path d="M14 80 V50 C14 26 48 26 48 50 V58 C48 88 114 88 114 58 V52"/><circle cx="81" cy="46" r="7.5"/></svg><b>Nabra</b></div>
+  <div class="giant" id="giant"><svg viewBox="0 0 354 110" aria-hidden="true"><rect class="gb" x="14" y="48" width="17" height="24" rx="8.5" fill="none" stroke="currentColor" stroke-width="11"/><circle class="gd" cx="16.5" cy="31" r="5.5" fill="currentColor"/><circle class="gd" cx="29.5" cy="31" r="5.5" fill="currentColor"/><rect class="gb" x="48" y="48" width="12" height="54" rx="6" fill="currentColor"/><path class="gb" d="M68 76 V36 A6 6 0 0 1 80 36 V76 Q80 78 78 78 H70 Q68 78 68 76Z" fill="currentColor"/><path class="gb" d="M74 36 L94 72" stroke="currentColor" stroke-width="12" stroke-linecap="round"/><path class="gb" d="M88 76 V36 A6 6 0 0 1 100 36 V76 Q100 78 98 78 H90 Q88 78 88 76Z" fill="currentColor"/><circle class="gd" cx="74" cy="92" r="6.5" fill="#2BB3A3"/><circle class="gd" cx="94" cy="17" r="6.5" fill="#2BB3A3"/><svg x="128" y="12" width="222" height="66" viewBox="0 0 262 78" class="ge"><g fill="none" stroke="currentColor" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"><path d="M6 72 V54 A18 18 0 0 1 42 54 V72"/><circle cx="82" cy="54" r="18"/><path d="M100 36 V72"/><path d="M122 6 V72"/><circle cx="140" cy="54" r="18"/><path d="M180 72 V54 A18 18 0 0 1 198 36"/><circle cx="238" cy="54" r="18"/><path d="M256 36 V72"/></g></svg></svg></div>
   <div class="legal"><span>© 2026 Nabra contributors · MIT · Inspired by Wispr Flow, not affiliated.</span><span><a href="https://github.com/mohasameh793-arch/nabra">GitHub</a><a href="https://github.com/mohasameh793-arch/nabra/releases">Releases</a></span></div>
 </footer>
 
-<a class="fab" href="https://github.com/mohasameh793-arch/nabra" aria-label="Nabra on GitHub"><svg class="mark" viewBox="6 24 116 64" aria-hidden="true"><path d="M14 80 V50 C14 26 48 26 48 50 V58 C48 88 114 88 114 58 V52"/><circle cx="81" cy="46" r="7.5"/></svg></a>
+<a class="fab" href="https://github.com/mohasameh793-arch/nabra" aria-label="Nabra on GitHub"><svg class="mark" viewBox="0 0 114 110" aria-hidden="true"><use href="#nm"/></svg></a>
 
 <script>
 // Windows with "Animation effects" off reports prefers-reduced-motion, which would freeze the whole page,
@@ -533,7 +532,7 @@ const ql = $('#qlist'), qa = $('#qa');
 faqs.forEach(([q], i) => { const b = document.createElement('button'); b.textContent = q; b.onclick = () => ask(i); ql.appendChild(b); });
 function ask(i) {
   $$('#qlist button').forEach((b, k) => b.classList.toggle('on', k === i));
-  qa.innerHTML = `<div class="bub q">${faqs[i][0]}</div><div class="bub a"></div><div class="av"><svg class="mark" viewBox="6 24 116 64"><path d="M14 80 V50 C14 26 48 26 48 50 V58 C48 88 114 88 114 58 V52"/><circle cx="81" cy="46" r="7.5"/></svg></div>`;
+  qa.innerHTML = `<div class="bub q">${faqs[i][0]}</div><div class="bub a"></div><div class="av"><svg class="mark" viewBox="0 0 114 110" aria-hidden="true"><use href="#nm"/></svg></div>`;
   const a = qa.querySelector('.bub.a'), w = faqs[i][1].split(' '); let k = 0;
   const t = setInterval(() => { a.textContent = w.slice(0, ++k).join(' '); if (k >= w.length) clearInterval(t); }, reduce ? 0 : 35);
 }
