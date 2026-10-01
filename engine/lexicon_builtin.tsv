@@ -1,0 +1,98 @@
+# term<TAB>Arabic-script spellings Whisper produces (comma-separated, optional)
+# Short terms (phonetic key < 4 consonants) are ONLY matched through these spellings.
+API	ايه بي اي, اي بي اي, ابي اي, الابي اي, الأبيأي
+SDK
+JSON	جيسون, جايسون, جسون
+SQL	سيكول, سيكوال, اس كيو ال
+HTML	اتش تي ام ال
+CSS	سي اس اس
+URL	يو ار ال
+npm	ان بي ام
+VRAM	في رام, في ار ام
+RTX
+GPU	جي بي يو
+CPU	سي بي يو
+AI
+UI
+UX
+VS Code	في اس كود, فيس كود
+Next.js	نكست جي اس, نيكس دوت جي اس, نكست
+Node.js	نود جي اس
+React	رياكت, ريأكت, رياكت جي اس
+TypeScript	تايب سكريبت, تايبسكربت
+JavaScript	جافا سكربت, جافاسكريبت, جافا سكريبت
+Python	بايثون, بيثون, بيتون
+Tailwind	تيل ويند, تيلويند
+Vercel	فرسل, فيرسل
+GitHub	جيت هب, قيت هب
+GitLab
+Docker	دوكر, دوكير, دوكرز
+Kubernetes	كوبرنيتس, كوبرنيتيس
+Ubuntu	أوبونتو, اوبونتو
+Linux	لينكس
+Windows	ويندوز
+Postgres	بوستجرس, بوستقرس
+PostgreSQL
+MongoDB	مونقو دي بي, مونجو دي بي
+Firebase	فايربيس, فيرباس
+Supabase	سوبابيس
+Redis	ريدس
+Chrome	كروم
+Firefox
+Slack	سلاك
+Discord	ديسكورد
+WhatsApp	واتساب, واتس اب
+Gmail	جيميل
+Figma	فيقما, فيجما
+Notion	نوشن
+Vite	فيت
+Angular
+Vue	فيو
+Svelte
+Django	جانقو, جانجو
+Flask	فلاسك
+FastAPI
+Rust	رست
+Golang
+Java	جافا
+Kotlin
+Swift	سويفت
+Flutter	فلاتر
+Laravel	لارافيل
+Prisma	بريزما
+GraphQL
+OAuth
+Stripe	سترايب
+AWS
+Azure	أزور
+Cloudflare
+Netlify
+localhost	لوكال هوست
+terminal	ترمنال, تيرمنال
+backend	باك اند
+frontend	فرونت اند
+database	داتابيس, داتا بيس
+server	سيرفر, سرفر
+deploy	ديبلوي, دبلوي
+component	كومبوننت, كمبوننت
+responsive	ريسبونسف
+website	ويب سايت, ويبسايت, وابسايت
+authentication	اوثنتيكيشن
+branch	برانش, برانتش
+merge	ميرج, مرج
+commit	كوميت, كومت
+push	بوش
+pull request	بول ريكوست
+repo	ريبو
+bug	بق
+feature	فيتشر, فيوتشر
+review	ريفيو
+refresh	ريفريش, رفريش
+variable	فاريبل
+function	فنكشن
+import	امبورت, إمبوت, انبوت
+export	اكسبورت
+script	سكربت, سكريبت
+login	لوقن, لوجن
+config	كونفيج, كونفق
+dashboard	داشبورد

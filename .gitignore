@@ -1,0 +1,8 @@
+.venv/
+.assets/
+__pycache__/
+desktop/target/
+desktop/gen/
+bench/audio/
+bench/results/
+logs/

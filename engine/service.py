@@ -1,0 +1,123 @@
+"""The engine's loopback HTTP API, used by the desktop app.
+
+GET  /health                                → {"device": "cuda", "llm": true}
+POST /dictate?langs=ar,en&mode=clean|raw    WAV body → {"text", "raw", "language", "ms"}
+POST /note?langs=ar,en                      WAV body → {"text", "language"}      (calls: no LLM, never stored)
+POST /summary   {"lines": [...], "language": "ar"|null}  → {"summary"}
+
+Transcripts are never written to logs.
+"""
+import json
+import logging
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from threading import Lock
+from urllib.parse import parse_qs, urlparse
+
+import httpx
+
+from lexicon import Lexicon
+from polish import Llm, check_edit
+from speech import Transcriber
+
+log = logging.getLogger("nabra.service")
+
+
+class Engine:
+    def __init__(self, dictionary: Path | None, llm_url: str | None, keep_clips: Path | None):
+        self.lexicon = Lexicon(Path(__file__).with_name("lexicon_builtin.tsv"), dictionary)
+        self.speech = Transcriber()
+        self.llm = Llm(llm_url) if llm_url else None
+        self.keep_clips = keep_clips
+        self.gpu = Lock()  # one decode at a time; dictation and call notes share the GPU
+
+    def dictate(self, wav: bytes, langs: list[str], mode: str) -> dict:
+        t0 = time.perf_counter()
+        vocab = self.lexicon.prompt_terms()
+        with self.gpu:
+            raw, language = self.speech.transcribe(wav, langs, vocab)
+        text = raw
+        if raw and mode != "raw":
+            text = self.lexicon.restore(raw)
+            if self.llm:
+                try:
+                    cleaned = self.llm.cleanup(text, vocab)
+                    if (reason := check_edit(text, cleaned)) is None:
+                        text = cleaned
+                    else:
+                        log.info("cleanup rejected: %s", reason.split(" [")[0])  # reason only, no words
+                except httpx.HTTPError as err:
+                    log.warning("LLM unavailable (%s); using lexicon output", type(err).__name__)
+        result = {"text": text, "raw": raw, "language": language, "ms": round((time.perf_counter() - t0) * 1000)}
+        if self.keep_clips and text:
+            self._keep(wav, result)
+        return result
+
+    def note(self, wav: bytes, langs: list[str]) -> dict:
+        with self.gpu:
+            raw, language = self.speech.transcribe(wav, langs, self.lexicon.prompt_terms())
+        return {"text": self.lexicon.restore(raw) if raw else "", "language": language}
+
+    def summary(self, lines: list[dict], language: str | None) -> str:
+        if not self.llm:
+            raise RuntimeError("local AI model is not available")
+        return self.llm.summarize(lines, language)
+
+    def _keep(self, wav: bytes, result: dict) -> None:
+        """Opt-in (--keep-clips): your own dictations become benchmark clips to review later."""
+        self.keep_clips.mkdir(parents=True, exist_ok=True)
+        clip = time.strftime("real-%Y%m%d-%H%M%S")
+        (self.keep_clips / f"{clip}.wav").write_bytes(wav)
+        row = {"id": clip, "audio": f"{clip}.wav", "text": result["text"], "stt": result["raw"],
+               "terms": [], "tags": ["real", "unreviewed"]}
+        with open(self.keep_clips / "manifest.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def handler_for(engine: Engine):
+    class Handler(BaseHTTPRequestHandler):
+        def reply(self, status: int, payload: dict) -> None:
+            body = json.dumps(payload, ensure_ascii=False).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            if self.path != "/health":
+                return self.reply(404, {"error": "not found"})
+            self.reply(200, {"device": engine.speech.device, "llm": bool(engine.llm and engine.llm.ready())})
+
+        def do_POST(self):
+            url = urlparse(self.path)
+            q = parse_qs(url.query)
+            langs = [c for c in q.get("langs", [""])[0].split(",") if c]
+            body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            try:
+                if url.path == "/dictate":
+                    self.reply(200, engine.dictate(body, langs, q.get("mode", ["clean"])[0]))
+                elif url.path == "/note":
+                    self.reply(200, engine.note(body, langs))
+                elif url.path == "/summary":
+                    req = json.loads(body)
+                    self.reply(200, {"summary": engine.summary(req["lines"], req.get("language"))})
+                else:
+                    self.reply(404, {"error": "not found"})
+            except RuntimeError as err:
+                self.reply(503, {"error": str(err)})
+            except Exception as err:
+                log.exception("%s failed", url.path)  # traceback only, never transcript text
+                self.reply(500, {"error": type(err).__name__})
+
+        def log_message(self, *_):  # no access log
+            pass
+
+    return Handler
+
+
+def serve(port: int, engine: Engine) -> None:
+    server = ThreadingHTTPServer(("127.0.0.1", port), handler_for(engine))
+    log.info("listening on 127.0.0.1:%d (device=%s, llm=%s)", port, engine.speech.device, bool(engine.llm))
+    server.serve_forever()

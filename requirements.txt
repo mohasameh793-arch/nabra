@@ -1,0 +1,7 @@
+# Engine
+faster-whisper>=1.2
+httpx>=0.27
+nvidia-cublas-cu12
+nvidia-cudnn-cu12==9.*
+# Benchmark only
+edge-tts>=7
