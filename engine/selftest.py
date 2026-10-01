@@ -46,11 +46,11 @@ for plain in ["يسعدني إبلاغكم بأن المشروع قد اكتمل
 # user dictionary wins and reloads
 with tempfile.TemporaryDirectory() as d:
     user = Path(d) / "dictionary.json"
-    user.write_text(json.dumps([{"term": "Majesty", "sounds_like": ["ماجستي"]}]), encoding="utf-8")
+    user.write_text(json.dumps([{"term": "Supabase", "sounds_like": ["سوبابيس"]}]), encoding="utf-8")
     lex_user = Lexicon(Path(__file__).with_name("lexicon_builtin.tsv"), user)
-    assert lex_user.restore("كلم ماجستي") == "كلم Majesty"
-    assert lex_user.prompt_terms()[0] == "Majesty"
-    assert lex_user.restore_counted("كلم ماجستي عن دوكر") == ("كلم Majesty عن Docker", 1, 1)
+    assert lex_user.restore("ارفعه على سوبابيس") == "ارفعه على Supabase"
+    assert lex_user.prompt_terms()[0] == "Supabase"
+    assert lex_user.restore_counted("ارفعه على سوبابيس عن دوكر") == ("ارفعه على Supabase عن Docker", 1, 1)
     user.write_text(json.dumps([{"from": "btw", "to": "by the way"}]), encoding="utf-8")
     import os, time  # noqa: E401  (bump mtime so the reload is seen on fast filesystems)
     os.utime(user, (time.time() + 5, time.time() + 5))

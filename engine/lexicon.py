@@ -78,7 +78,7 @@ def load_builtin(path: Path) -> list[Entry]:
 
 class Lexicon:
     """Built-in terms + the user's dictionary file, which the app writes as a JSON list of
-    {"term": "Majesty", "sounds_like": ["ماجستي"]}  or  {"from": "btw", "to": "by the way"}."""
+    {"term": "Layla", "sounds_like": ["ليلى"]}  or  {"from": "btw", "to": "by the way"}."""
 
     def __init__(self, builtin: Path, user: Path | None = None):
         self.builtin = load_builtin(builtin)

@@ -1,8 +1,8 @@
 # Nabra v2 — full rebuild in 13 hours (same plan, new code, Flow-style UI)
 
 ## Context
-Rebuild the whole project from zero in `C:\Users\Majesty\Desktop\nabra-v2` with entirely new code and
-design, keeping the product plan and every proven behavior from v1 (`Desktop\ai voice flow`, left untouched).
+Rebuild the whole project from zero with entirely new code and design, keeping the product plan and every
+proven behavior from the v1 prototype.
 The UI follows Wispr Flow's *layout and interaction* (a small floating pill + a hub window with a left
 sidebar) with Nabra's own visuals. Pill stays on the **right edge**. Large downloaded assets (Whisper cache,
 Qwen3-8B GGUF, llama.cpp, pip wheels) are reused; no code is copied. The user watches progress in

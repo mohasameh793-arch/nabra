@@ -66,7 +66,7 @@ function edit(word = null) {
       h("button", { type: "button", "aria-pressed": String(kind === "word"), onclick: () => { kind = "word"; draw(); } }, "Word"),
       h("button", { type: "button", "aria-pressed": String(kind === "replace"), onclick: () => { kind = "replace"; draw(); } }, "Replacement"));
     const fields = kind === "word"
-      ? [h("label", {}, "Word or name", h("input", { type: "text", name: "term", value: word?.term ?? "", required: true, dir: "auto", placeholder: "e.g. Supabase, Majesty, نبرة" })),
+      ? [h("label", {}, "Word or name", h("input", { type: "text", name: "term", value: word?.term ?? "", required: true, dir: "auto", placeholder: "e.g. Supabase, Layla, نبرة" })),
         h("label", {}, h("span", {}, "Sounds like ", h("small", {}, "(optional; how speech-to-text writes it, comma-separated)")),
           h("input", { type: "text", name: "sounds", value: (word?.sounds_like ?? []).join(", "), dir: "auto", placeholder: "e.g. سوبابيس" }))]
       : [h("label", {}, "When I say", h("input", { type: "text", name: "from", value: word?.from ?? "", required: true, placeholder: "btw" })),

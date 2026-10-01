@@ -438,7 +438,7 @@ mod tests {
     #[test]
     fn dictionary_round_trip_in_engine_format() {
         let store = temp_store("dict");
-        store.save_word(Word { term: Some("Majesty".into()), sounds_like: vec!["ماجستي".into()], ..Default::default() }).unwrap();
+        store.save_word(Word { term: Some("Layla".into()), sounds_like: vec!["ليلى".into()], ..Default::default() }).unwrap();
         let words = store.save_word(Word { from: Some("btw".into()), to: Some("by the way".into()), ..Default::default() }).unwrap();
         assert_eq!(words.len(), 2);
         let raw = fs::read_to_string(store.dictionary_path()).unwrap();
