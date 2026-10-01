@@ -1,0 +1,30 @@
+{"id": "gulf-a", "text": "أبي أسوي dashboard بسيط بالـ React وأربطه مع Supabase.", "terms": ["React", "Supabase"], "tags": ["gulf", "mixed", "dev"]}
+{"id": "gulf-b", "text": "طيب خلنا نفتح VS Code ونسوي new branch قبل الـ merge.", "terms": ["VS Code"], "tags": ["gulf", "mixed", "dev"]}
+{"id": "gulf-c", "text": "السيرفر طاح، شيك على الـ logs في Docker بسرعة.", "terms": ["Docker"], "tags": ["gulf", "mixed", "dev"]}
+{"id": "gulf-d", "text": "وش رايك نحول المشروع من JavaScript إلى TypeScript هالأسبوع؟", "terms": ["JavaScript", "TypeScript"], "tags": ["gulf", "mixed", "dev"]}
+{"id": "gulf-e", "text": "الاجتماع بكره الساعة عشر الصبح مع فريق الـ design.", "terms": [], "tags": ["gulf", "mixed"]}
+{"id": "gulf-f", "text": "رفعت الـ build على Vercel وكل شي شغال تمام.", "terms": ["Vercel"], "tags": ["gulf", "mixed", "dev"]}
+{"id": "egy-a", "text": "أنا عايز أعمل API بسيطة بالـ Python وأرجع JSON.", "terms": ["API", "Python", "JSON"], "tags": ["egyptian", "mixed", "dev"]}
+{"id": "egy-b", "text": "الـ deploy وقع امبارح عشان الـ environment variables مش متظبطة.", "terms": [], "tags": ["egyptian", "mixed", "dev"]}
+{"id": "egy-c", "text": "ابعتلي الـ link على WhatsApp وأنا هبص عليه بالليل.", "terms": ["WhatsApp"], "tags": ["egyptian", "mixed"]}
+{"id": "egy-d", "text": "محتاجين نغير الـ database من MongoDB لـ Postgres.", "terms": ["MongoDB", "Postgres"], "tags": ["egyptian", "mixed", "dev"]}
+{"id": "egy-e", "text": "الكلاس بتاعك فيه bug في الـ constructor.", "terms": [], "tags": ["egyptian", "mixed", "dev"]}
+{"id": "lev-a", "text": "بدي أنزل Ubuntu على اللابتوب وأشغل عليه Kubernetes.", "terms": ["Ubuntu", "Kubernetes"], "tags": ["levantine", "mixed", "dev"]}
+{"id": "lev-b", "text": "شو صار بالـ pull request تبعي؟ لسه ما حدا عمله review.", "terms": [], "tags": ["levantine", "mixed", "dev"]}
+{"id": "lev-c", "text": "هلق رح أبعتلك الملف على Slack.", "terms": ["Slack"], "tags": ["levantine", "mixed"]}
+{"id": "lev-d", "text": "الـ frontend صار جاهز بس الـ backend لسه.", "terms": [], "tags": ["levantine", "mixed", "dev"]}
+{"id": "msa-a", "text": "نود أن نشكركم على حضوركم ومشاركتكم في ورشة العمل.", "terms": [], "tags": ["msa", "arabic-only"]}
+{"id": "msa-b", "text": "يرجى إرسال التقرير النهائي قبل نهاية الأسبوع القادم.", "terms": [], "tags": ["msa", "arabic-only"]}
+{"id": "msa-c", "text": "تم تأجيل الاجتماع إلى يوم الثلاثاء بسبب الظروف الجوية.", "terms": [], "tags": ["msa", "arabic-only"]}
+{"id": "msa-d", "text": "المبلغ الباقي سيتم دفعه عند استلام المشروع.", "terms": [], "tags": ["msa", "arabic-only"]}
+{"id": "msa-e", "text": "نتمنى لكم يوماً سعيداً ونتطلع إلى التعاون معكم.", "terms": [], "tags": ["msa", "arabic-only"]}
+{"id": "en-a", "text": "Let's push the hotfix to GitHub and tag the release.", "terms": ["GitHub"], "tags": ["english", "dev"]}
+{"id": "en-b", "text": "Can you send me the Figma file before the meeting?", "terms": ["Figma"], "tags": ["english"]}
+{"id": "en-c", "text": "The app crashes when the user opens settings on Android.", "terms": [], "tags": ["english", "dev"]}
+{"id": "en-d", "text": "Email Sara and tell her the invoice is ready.", "terms": ["Sara"], "tags": ["english", "names"]}
+{"id": "en-e", "text": "My RTX 5070 Ti has sixteen gigabytes of VRAM.", "terms": ["RTX 5070 Ti", "VRAM"], "tags": ["english", "numbers"]}
+{"id": "en-f", "text": "The docs live at docs.nabra.app slash setup.", "terms": ["docs.nabra.app"], "tags": ["english", "urls"]}
+{"id": "fr-a", "text": "On se retrouve demain pour finir la présentation.", "terms": [], "tags": ["french"]}
+{"id": "fr-b", "text": "J'ai mis à jour le code sur GitHub ce matin.", "terms": ["GitHub"], "tags": ["french", "dev"]}
+{"id": "mix-fr", "text": "خلصنا الـ meeting، on se parle demain inchallah.", "terms": [], "tags": ["gulf", "french", "mixed"]}
+{"id": "num-a", "text": "الفاتورة ثلاثمية وخمسين ريال وموعد الدفع خمسة عشر أكتوبر.", "terms": [], "tags": ["gulf", "arabic-only", "numbers"]}
