@@ -262,10 +262,9 @@ header{position:sticky;top:12px;z-index:60;display:flex;justify-content:center;m
 .rv{opacity:0;transform:translateY(30px);transition:opacity .9s var(--ease),transform .9s var(--ease)}
 .rv.in{opacity:1;transform:none}
 
-@media (prefers-reduced-motion:reduce){
-  .word,.rv{opacity:1;transform:none;filter:none;animation:none}
-  .track,.photo::before,.minipill i,.badge::after{animation:none}
-}
+/* Motion always on, like the Wispr Flow site. Add ?still to the URL for a static page. */
+.still .word,.still .rv{opacity:1;transform:none;filter:none;animation:none}
+.still .track,.still .photo::before,.still .minipill i,.still .badge::after{animation:none}
 </style>
 </head>
 <body>
@@ -435,7 +434,10 @@ header{position:sticky;top:12px;z-index:60;display:flex;justify-content:center;m
 <a class="fab" href="https://github.com/mohasameh793-arch/nabra" aria-label="Nabra on GitHub"><svg class="mark" viewBox="6 24 116 64" aria-hidden="true"><path d="M14 80 V50 C14 26 48 26 48 50 V58 C48 88 114 88 114 58 V52"/><circle cx="81" cy="46" r="7.5"/></svg></a>
 
 <script>
-const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches && !location.search.includes('motion');
+// Windows with "Animation effects" off reports prefers-reduced-motion, which would freeze the whole page,
+// so motion stays on by default; ?still gives a static page.
+const reduce = location.search.includes('still');
+if (reduce) document.documentElement.classList.add('still');
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 
 /* ---------- text flowing along SVG paths ---------- */
