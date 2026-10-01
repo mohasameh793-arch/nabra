@@ -35,6 +35,9 @@ Pop-Location
 New-Item -ItemType Directory -Force dist | Out-Null
 $setup = Get-ChildItem desktop\target\release\bundle\nsis\*-setup.exe | Sort-Object LastWriteTime | Select-Object -Last 1
 Copy-Item $setup.FullName dist\Nabra-Setup.exe -Force
+# Updater signature (only when TAURI_SIGNING_PRIVATE_KEY was set: see scripts\release.ps1).
+Remove-Item dist\Nabra-Setup.exe.sig -ErrorAction SilentlyContinue
+if (Test-Path "$($setup.FullName).sig") { Copy-Item "$($setup.FullName).sig" dist\Nabra-Setup.exe.sig -Force }
 $hash = (Get-FileHash dist\Nabra-Setup.exe -Algorithm SHA256).Hash
 "{0}  Nabra-Setup.exe" -f $hash.ToLower() | Set-Content dist\Nabra-Setup.exe.sha256
 Write-Host ("Built dist\Nabra-Setup.exe ({0:N0} MB)  SHA-256 {1}" -f ((Get-Item dist\Nabra-Setup.exe).Length / 1MB), $hash)

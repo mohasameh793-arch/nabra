@@ -128,6 +128,23 @@ async function body() {
       const e = state.boot.engine;
       return [h("h2", {}, "About Nabra"),
         field("Version", null, h("span", {}, state.boot.version)),
+        field("Install updates automatically", "New versions download in the background and install when you're not dictating or in a meeting. Updates are signed, so only official releases install.", (() => {
+          const t = h("input", { type: "checkbox", class: "switch", "aria-label": "Install updates automatically",
+            onchange: (ev) => save({ auto_update: ev.target.checked }, ev.target.checked ? "Automatic updates on" : "Automatic updates off") });
+          t.checked = s.auto_update;
+          return t;
+        })()),
+        field("Updates", null, h("button", { class: "btn", onclick: async (ev) => {
+          ev.target.disabled = true;
+          ev.target.textContent = "Checking…";
+          try {
+            const r = await call("check_updates");
+            toast(r.status === "up_to_date" ? `You're on the latest version (${r.version})` : `Installing ${r.version}… Nabra will reopen`);
+          } finally {
+            ev.target.disabled = false;
+            ev.target.textContent = "Check for updates";
+          }
+        } }, "Check for updates")),
         field("Speech engine", "Whisper large-v3, local", h("span", {}, e ? (e.device === "cuda" ? "Running on GPU" : "Running on CPU") : "Starting…")),
         field("AI cleanup & overviews", "Qwen3 8B, local", h("span", {}, e?.llm ? "Ready" : "Off")),
         field("Models", "Speech and AI models downloaded during setup.",

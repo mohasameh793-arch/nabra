@@ -312,12 +312,18 @@ impl Controller {
                 let _ = self.app.emit("engine", &health);
                 self.ready = true;
                 let gpu = if health.device == "cuda" { "GPU" } else { "CPU" };
-                self.done(format!("Ready. Hold {TALK_KEY_LABEL} to dictate."), gpu);
+                let updated = self.state().updated_to.lock().unwrap().take();
+                match updated {
+                    Some(v) => self.done(format!("Nabra updated to {v}"), "Ready"),
+                    None => self.done(format!("Ready. Hold {TALK_KEY_LABEL} to dictate."), gpu),
+                }
             }
             Err(e) => self.problem(e),
         }
 
         loop {
+            // Updates wait while a dictation or voice command is in progress.
+            self.state().busy.store(self.take.is_some(), std::sync::atomic::Ordering::SeqCst);
             match inbox.recv_timeout(Duration::from_millis(50)) {
                 Ok(Control::Key(Shortcut::TalkPressed)) if self.take.is_none() => self.begin(false, false),
                 Ok(Control::Key(Shortcut::TalkReleased)) if self.take.as_ref().is_some_and(|t| !t.hands_free && !t.command) => {

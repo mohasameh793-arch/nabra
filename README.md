@@ -122,7 +122,7 @@ that, a preview of what was typed. Clicking it never takes the cursor away from 
 | **Style** | Formal, casual or very casual writing for each kind of app: personal chats, work chats, email, everything else. Only capital letters and end punctuation change; your words never do. |
 | **Transforms** | How Right Alt editing works, the commands you can say, and a box to try them. |
 | **Scratchpad** | Autosaved drafts: click in, dictate, copy when ready. |
-| **Settings** | Name, appearance (light/dark), start with Windows, microphone, Clean/Raw mode, your languages, summary language, meeting reminders, calendar, AI connections, privacy, models. |
+| **Settings** | Name, appearance (light/dark), start with Windows, automatic updates, microphone, Clean/Raw mode, your languages, summary language, meeting reminders, calendar, AI connections, privacy, models. |
 
 **Clean vs Raw.** *Clean* (the default) fixes punctuation, technical terms and leftovers with the local AI, and a
 built-in guard rejects any AI edit that would translate, rewrite, drop your words or change numbers. *Raw* types
@@ -223,17 +223,23 @@ brand/     logo + app icon (SVG) · export.py → icon.ico, PNGs, GitHub social 
 
 ## Make a release (maintainers)
 
+Installed copies of Nabra **update themselves**: they check GitHub on start and every 6 hours, download new
+versions in the background, and install them when you aren't dictating or in a meeting (Settings → About to
+turn it off or check now). Publishing an update is one command:
+
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\setup.ps1          # once
-powershell -ExecutionPolicy Bypass -File scripts\build-installer.ps1
+powershell -ExecutionPolicy Bypass -File scripts\release.ps1 -Version 2.1.1 -Notes "What changed"
 ```
 
-This freezes the engine with PyInstaller, smoke-tests it, builds the app in release mode, and writes
-**`dist\Nabra-Setup.exe`** plus **`dist\Nabra-Setup.exe.sha256`** (needs Node.js for the Tauri CLI).
+It sets the version, runs the tests, commits and pushes, builds the installer (PyInstaller engine + Tauri NSIS),
+**signs** it, writes `latest.json` (what installed apps check), and publishes the GitHub release with
+`Nabra-Setup.exe`, its SHA-256 and `latest.json`. Needs `gh` logged in and Node.js (for the Tauri CLI).
 
-Then on GitHub: **Releases → Draft a new release** → tag (e.g. `v2.0.0`) → attach `Nabra-Setup.exe` → paste
-the SHA-256 into the notes → **Publish**. The "Install" link at the top of this README always points to the
-latest release.
+**The signing key.** Updates are signed with a private key kept outside the repo at
+`%USERPROFILE%\.nabra-signing\updater.key`; installed apps only accept updates signed by it. **Back it up
+somewhere safe.** If it's lost, installed copies can never be updated again. Never commit it.
+
+To only build an installer locally (no release): `scripts\build-installer.ps1` → `dist\Nabra-Setup.exe`.
 
 ## Accuracy
 

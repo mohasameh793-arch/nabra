@@ -3,7 +3,9 @@
   "productName": "Nabra",
   "version": "2.0.1",
   "identifier": "app.nabra.v2",
-  "build": { "frontendDist": "ui" },
+  "build": {
+    "frontendDist": "ui"
+  },
   "app": {
     "withGlobalTauri": true,
     "windows": [
@@ -50,5 +52,21 @@
       "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self'"
     }
   },
-  "bundle": { "active": false, "icon": ["icons/icon.ico"] }
+  "bundle": {
+    "active": false,
+    "icon": [
+      "icons/icon.ico"
+    ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDA4NThFNEU4RjIwNTEzMjMKUldRakV3WHk2T1JZQ0J1TGpvaFJjL09pbUpBL254V2pkcUdVQjNCTk11MDc3Vjh1aDhFQ05Ga1UK",
+      "endpoints": [
+        "https://github.com/mohasameh793-arch/nabra/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
 }

@@ -12,9 +12,11 @@ mod secrets;
 mod sidecar;
 mod sound;
 mod store;
+mod updater;
 
 use std::collections::HashSet;
 use std::sync::mpsc::{channel, Sender};
+use std::sync::atomic::AtomicBool;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -39,6 +41,10 @@ pub struct App {
     pub calendar: Mutex<Vec<calendar::Event>>,
     /// (title, when offered) of the meeting the pill just offered notes for.
     pub pending_title: Mutex<Option<(String, u64)>>,
+    /// A dictation or voice command is in progress (updates wait for it).
+    pub busy: AtomicBool,
+    /// Set after an automatic update, to tell the user once.
+    pub updated_to: Mutex<Option<String>>,
 }
 
 impl App {
@@ -176,6 +182,7 @@ fn main() {
         return;
     }
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(commands::handler())
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
@@ -187,7 +194,14 @@ fn main() {
         })
         .setup(|app| {
             let store = Store::new(app.path().app_data_dir()?);
-            let settings = store.settings();
+            let mut settings = store.settings();
+            // First run after an automatic update: remember to say so once.
+            let version = app.package_info().version.to_string();
+            let updated_to = (!settings.last_version.is_empty() && settings.last_version != version).then(|| version.clone());
+            if settings.last_version != version {
+                settings.last_version = version;
+                let _ = store.save_settings(&settings);
+            }
             let (tx, inbox) = channel();
             app.manage(App {
                 store,
@@ -198,7 +212,10 @@ fn main() {
                 control: Mutex::new(tx.clone()),
                 calendar: Mutex::new(Vec::new()),
                 pending_title: Mutex::new(None),
+                busy: AtomicBool::new(false),
+                updated_to: Mutex::new(updated_to),
             });
+            updater::watch(app.handle().clone());
             let watcher = app.handle().clone();
             std::thread::spawn(move || watch_calendar(watcher));
             pill::init(app.handle());

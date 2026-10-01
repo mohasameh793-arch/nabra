@@ -2,20 +2,25 @@
   "$schema": "https://schema.tauri.app/config/2",
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "publisher": "Nabra contributors",
     "copyright": "MIT License, Nabra contributors",
     "category": "Productivity",
     "shortDescription": "Local-first voice typing and call notes for Arabic, English and mixed speech",
     "longDescription": "Hold a key, speak, and your words appear wherever you type. Mixed Arabic and English stay as spoken. Speech recognition and AI run on your own PC.",
     "licenseFile": "../LICENSE",
-    "resources": { "../build/engine/nabra-engine/": "engine/" },
+    "resources": {
+      "../build/engine/nabra-engine/": "engine/"
+    },
     "windows": {
       "nsis": {
         "installMode": "currentUser",
         "installerHooks": "installer-hooks.nsh",
         "displayLanguageSelector": false
       }
-    }
+    },
+    "createUpdaterArtifacts": true
   }
 }

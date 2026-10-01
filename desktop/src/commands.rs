@@ -45,6 +45,12 @@ fn set_autostart(on: bool) -> Res<bool> {
     Ok(autostart::enabled())
 }
 
+/// Settings → About → Check for updates. Installs right away if one exists (Nabra restarts).
+#[tauri::command]
+async fn check_updates(app: AppHandle) -> Res<crate::updater::Status> {
+    crate::updater::run_once(&app).await
+}
+
 #[tauri::command]
 fn microphones() -> Vec<String> {
     sound::microphones()
@@ -345,6 +351,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         boot,
         save_settings,
         microphones,
+        check_updates,
         set_autostart,
         history,
         edit_dictation,

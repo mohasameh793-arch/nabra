@@ -7,6 +7,10 @@
 !define NABRA_RUN_KEY "Software\Microsoft\Windows\CurrentVersion\Run"
 
 !macro NSIS_HOOK_POSTINSTALL
+  ; Automatic updates (/UPDATE) keep the user's existing choice: never ask again.
+  ${If} $UpdateMode = 1
+    Goto nabra_startup_done
+  ${EndIf}
   MessageBox MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON1 \
     "Start Nabra automatically when you sign in to Windows?$\r$\n$\r$\nRecommended, so your dictation shortcut always works. You can change this later in Nabra → Settings." \
     /SD IDYES IDNO nabra_no_startup

@@ -50,6 +50,10 @@ pub struct Settings {
     pub styles: Styles,
     /// Ask to take notes when a calendar meeting starts.
     pub meeting_prompts: bool,
+    /// Download and install signed updates from GitHub automatically.
+    pub auto_update: bool,
+    /// Version that ran last time (to say "Nabra updated to …" once after an update).
+    pub last_version: String,
 }
 
 /// "formal" | "casual" | "very_casual" for each kind of app (see keyboard::app_kind).
@@ -91,6 +95,8 @@ impl Default for Settings {
             notes_consent: false,
             styles: Styles::default(),
             meeting_prompts: true,
+            auto_update: true,
+            last_version: String::new(),
         }
     }
 }
