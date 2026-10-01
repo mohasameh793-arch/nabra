@@ -1,1 +1,36 @@
-<!doctype html><title>pill</title>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nabra pill</title>
+<link rel="stylesheet" href="pill.css">
+</head>
+<body>
+  <!-- Idle + hover: the vertical capsule with Dictate / Notes buttons -->
+  <div class="dock" id="dock">
+    <div class="tips" aria-hidden="true">
+      <div class="tip" id="tip-mic"><b>Dictate</b><span>Hold <kbd id="key-talk">Right Ctrl</kbd> · or click</span></div>
+      <div class="tip" id="tip-notes"><b id="notes-label">Start note taking</b><span>Press <kbd id="key-notes">Ctrl+Alt+N</kbd> · or click</span></div>
+    </div>
+    <div class="capsule" id="capsule">
+      <button class="round" id="mic" aria-label="Dictate" data-tip="tip-mic">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" fill="none" stroke-width="1.8" stroke-linecap="round"/></svg>
+      </button>
+      <button class="round" id="notes" aria-label="Start note taking" data-tip="tip-notes">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.2" fill="none" stroke-width="1.8"/><circle class="core" cx="12" cy="12" r="4.4"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Everything else: a horizontal pill -->
+  <div class="bar" id="bar" role="status" aria-live="polite">
+    <button class="stop" id="stop" aria-label="Stop" hidden><span></span></button>
+    <span class="dot" id="dot" aria-hidden="true"></span>
+    <span class="levels" id="levels" aria-hidden="true"></span>
+    <span class="clock" id="clock"></span>
+    <span class="msg" id="msg" dir="auto"></span>
+    <span class="detail" id="detail"></span>
+  </div>
+  <script src="pill.js"></script>
+</body>
+</html>

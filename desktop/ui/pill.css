@@ -1,0 +1,98 @@
+:root {
+  --ink: #111110;
+  --rim: rgba(255, 255, 255, 0.62);
+  --rim-soft: rgba(255, 255, 255, 0.14);
+  --fg: #f6f5f2;
+  --muted: #a7a39b;
+  --rec: #ff4d5e;
+  --ok: #5ad1c2;
+  --warn: #f5b84b;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+body {
+  font: 13px/1.35 "Segoe UI Variable Text", "Segoe UI", "Noto Sans Arabic", Tahoma, sans-serif;
+  color: var(--fg); user-select: none; cursor: default;
+  display: flex; align-items: center; justify-content: flex-end; padding-right: 2px;
+}
+body[data-view="idle"] .bar, body[data-view="hover"] .bar { display: none; }
+body:not([data-view="idle"]):not([data-view="hover"]) .dock { display: none; }
+
+/* ---- vertical capsule ---- */
+.dock { display: flex; align-items: center; gap: 10px; }
+.capsule {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  background: var(--ink); border: 1.5px solid var(--rim); border-radius: 999px;
+  width: 12px; height: 60px; padding: 0; overflow: hidden;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  transition: width 140ms ease, height 140ms ease, padding 140ms ease;
+}
+.capsule .round { display: none; }
+body[data-view="hover"] .capsule { width: 50px; height: 108px; padding: 6px 0; }
+body[data-view="hover"] .capsule .round { display: grid; }
+
+.round {
+  place-items: center; width: 38px; height: 38px; border-radius: 50%; border: 0; padding: 0;
+  background: transparent; cursor: pointer;
+}
+.round svg { width: 22px; height: 22px; fill: var(--fg); stroke: var(--fg); }
+.round:hover, .round:focus-visible { background: rgba(255, 255, 255, 0.12); outline: none; }
+#notes.on .core { fill: var(--rec); }
+#notes.on svg { stroke: var(--rec); }
+
+/* tooltips to the left of the capsule */
+.tips { position: relative; width: 220px; height: 108px; display: none; }
+body[data-view="hover"] .tips { display: block; }
+.tip {
+  position: absolute; right: 0; display: none; flex-direction: column; gap: 2px; align-items: flex-end;
+  background: var(--ink); border: 1px solid var(--rim-soft); border-radius: 10px; padding: 7px 10px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.32); white-space: nowrap;
+}
+.tip.show { display: flex; }
+#tip-mic { top: 10px; }
+#tip-notes { bottom: 10px; }
+.tip b { font-weight: 600; }
+.tip span { color: var(--muted); font-size: 12px; }
+kbd {
+  font: 600 11px/1 "Segoe UI", sans-serif; color: var(--fg);
+  background: rgba(255, 255, 255, 0.12); border-radius: 5px; padding: 2px 5px;
+}
+
+/* ---- horizontal bar ---- */
+.bar {
+  display: flex; align-items: center; gap: 10px; max-width: 410px; min-height: 44px;
+  padding: 8px 16px 8px 10px; border-radius: 999px;
+  background: var(--ink); border: 1.5px solid var(--rim); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+body[data-view="result"] .bar, body[data-view="problem"] .bar { border-radius: 22px; padding-left: 14px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--muted); }
+body[data-view="notes"] .dot { background: var(--rec); animation: pulse 1.4s ease-in-out infinite; }
+body[data-view="result"] .dot { background: var(--ok); }
+body[data-view="problem"] .dot { background: var(--warn); }
+body[data-view="working"] .dot {
+  width: 14px; height: 14px; background: none; border: 2px solid var(--ok); border-right-color: transparent;
+  animation: spin 0.8s linear infinite;
+}
+body[data-view="listening"] .dot { display: none; }
+
+.stop {
+  width: 28px; height: 28px; border-radius: 50%; border: 0; display: grid; place-items: center; flex: none;
+  background: rgba(255, 255, 255, 0.14); cursor: pointer;
+}
+.stop span { width: 10px; height: 10px; border-radius: 2px; background: var(--rec); }
+.stop:hover { background: rgba(255, 255, 255, 0.24); }
+
+.levels { display: none; align-items: center; gap: 3px; height: 24px; }
+body[data-view="listening"] .levels { display: flex; }
+.levels i { width: 3px; height: 4px; border-radius: 2px; background: var(--fg); transition: height 60ms linear; }
+
+.clock { font-variant-numeric: tabular-nums; font-weight: 600; display: none; }
+body[data-view="listening"] .clock, body[data-view="notes"] .clock { display: inline; }
+.msg { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; unicode-bidi: plaintext; }
+body[data-view="listening"] .msg, body[data-view="notes"] .msg { color: var(--muted); }
+.detail { color: var(--muted); font-size: 11px; white-space: nowrap; flex: none; }
+.detail:empty { display: none; }
+
+@keyframes pulse { 50% { opacity: 0.35; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
