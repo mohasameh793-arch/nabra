@@ -228,6 +228,8 @@ pub struct Note {
     pub seconds: f32,
     pub title: String,
     pub summary: Option<String>,
+    /// The user's own notes typed during the meeting ("My thoughts").
+    pub thoughts: String,
     pub lines: Vec<Line>,
 }
 

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nabra · Note</title>
+<link rel="stylesheet" href="hub.css">
+<link rel="stylesheet" href="meeting.css">
+</head>
+<body class="meeting-window">
+  <header class="titlebar" data-tauri-drag-region>
+    <div class="mw-brand" data-tauri-drag-region>
+      <svg class="logo" viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round"><path d="M12 27a20 20 0 0 0 40 0" stroke-width="6.5"/><path d="M25 33.5v6M32 26v13.5M39 31v8.5" stroke-width="5"/></g><circle cx="32" cy="12.5" r="5" class="logo-dot"/></svg>
+      <span>Nabra</span>
+    </div>
+    <div class="tb-right">
+      <button class="win-btn" id="mw-min" aria-label="Minimize"><svg viewBox="0 0 24 24"><path d="M6 12h12"/></svg></button>
+      <button class="win-btn close" id="mw-close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg></button>
+    </div>
+  </header>
+
+  <main class="mw">
+    <section class="mw-head">
+      <h1 id="mw-title" dir="auto">New note</h1>
+      <div class="mw-meta" id="mw-meta"></div>
+      <div class="mw-live" id="mw-live">
+        <span class="rec-dot live" id="mw-dot"></span>
+        <span class="mw-clock" id="mw-clock">0:00</span>
+        <span class="mw-state" id="mw-state">Recording</span>
+        <button class="btn danger" id="mw-stop">Stop</button>
+      </div>
+      <div class="mw-meters" id="mw-meters" aria-label="Sound levels">
+        <span>They <small>(computer audio)</small></span><span class="meter"><i id="lv-them"></i></span>
+        <span>You <small>(microphone)</small></span><span class="meter"><i id="lv-you"></i></span>
+      </div>
+    </section>
+
+    <nav class="tabs mw-tabs" role="tablist">
+      <button role="tab" data-tab="thoughts" aria-selected="true">My thoughts</button>
+      <button role="tab" data-tab="transcript" aria-selected="false">Transcript <span class="count" id="mw-count"></span></button>
+      <button role="tab" data-tab="summary" aria-selected="false">Summary</button>
+    </nav>
+
+    <section class="mw-panel" id="tab-thoughts">
+      <textarea id="mw-thoughts" dir="auto" placeholder="Write your own notes while you listen: questions, ideas, to-dos…"></textarea>
+      <div class="mw-saved muted" id="mw-saved"></div>
+    </section>
+    <section class="mw-panel" id="tab-transcript" hidden>
+      <ol class="transcript" id="mw-transcript" aria-live="polite"></ol>
+      <p class="empty" id="mw-transcript-empty">Lines appear a few seconds after someone speaks.</p>
+    </section>
+    <section class="mw-panel" id="tab-summary" hidden></section>
+  </main>
+
+  <div class="toast" id="toast" role="status" hidden></div>
+  <script type="module" src="meeting.js"></script>
+</body>
+</html>

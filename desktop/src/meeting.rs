@@ -109,8 +109,8 @@ impl Meeting {
         let (ready_tx, ready_rx) = channel();
 
         let capture = {
-            let stop = stop.clone();
-            std::thread::spawn(move || record(stop, mic, phrase_tx, ready_tx))
+            let (stop, app) = (stop.clone(), app.clone());
+            std::thread::spawn(move || record(app, stop, mic, phrase_tx, ready_tx))
         };
         ready_rx.recv().map_err(|_| "Recording didn't start".to_string())??;
 
@@ -158,7 +158,16 @@ impl Meeting {
         self.note.lock().unwrap().lines.clone()
     }
 
-    /// Stops recording, finishes the queued phrases, saves. Then summarizes in the background.
+    /// The live note's "My thoughts" text (saved with the note when it stops).
+    pub fn thoughts(&self) -> String {
+        self.note.lock().unwrap().thoughts.clone()
+    }
+
+    pub fn set_thoughts(&self, text: String) {
+        self.note.lock().unwrap().thoughts = text;
+    }
+
+    /// Stops recording, finishes the queued phrases, saves. The summary is written only when the user asks.
     pub fn finish(self, app: &AppHandle) -> Result<Note, String> {
         self.stop.store(true, Ordering::SeqCst);
         let recorded = self.capture.join().map_err(|_| "Recording thread crashed".to_string())?;
@@ -168,14 +177,6 @@ impl Meeting {
         let state = app.state::<App>();
         state.store.save_note(&note)?;
         recorded?;
-        if !note.lines.is_empty() {
-            let (app, id) = (app.clone(), note.id.clone());
-            std::thread::spawn(move || {
-                if let Err(e) = summarize(&app, &id, None) {
-                    let _ = app.emit("notes-problem", e);
-                }
-            });
-        }
         Ok(note)
     }
 }
@@ -197,6 +198,7 @@ pub fn summarize(app: &AppHandle, id: &str, language: Option<String>) -> Result<
 }
 
 fn record(
+    app: AppHandle,
     stop: Arc<AtomicBool>,
     mic: Option<String>,
     out: Sender<(Source, Vec<f32>, u32, f32)>,
@@ -222,6 +224,8 @@ fn record(
     };
     while !stop.load(Ordering::SeqCst) {
         std::thread::sleep(Duration::from_millis(200));
+        // Live sound meters for the meeting window: is it hearing the call, and you?
+        let _ = app.emit("meeting-level", serde_json::json!({ "them": taps[0].level(), "you": taps[1].level() }));
         pump(false);
     }
     pump(true);

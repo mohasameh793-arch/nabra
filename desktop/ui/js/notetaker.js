@@ -136,16 +136,18 @@ function panel() {
       ui.summarizing = false;
       render();
     }
-  } }, ui.summarizing ? "Writing overview…" : n.summary ? "Rewrite overview" : "Write overview");
+  } }, ui.summarizing ? "Summarizing…" : n.summary ? "Summarize again" : "Summarize");
   const text = n.lines.map((l) => `[${clock(l.t)}] ${l.who === "you" ? "You" : "They"}: ${l.text}`).join("\n");
   return h("aside", { class: "notes-panel" },
     h("h2", { dir: "auto" }, n.title || "Untitled call"),
     h("div", { class: "meta" }, `${new Date(n.started_at).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" })} • ${timeOf(n.started_at)}`),
-    h("div", { class: "label" }, "Overview"),
+    h("div", { class: "label" }, "Summary"),
     n.summary ? h("div", { class: "overview", dir: "auto", html: markdown(n.summary) })
-      : h("p", { class: "muted" }, ui.summarizing ? "Writing the overview with your local AI model…" : n.lines.length ? "No overview yet." : "Nothing was said in this call."),
+      : h("p", { class: "muted" }, ui.summarizing ? "Your local AI is reading the whole transcript…" : n.lines.length ? "No summary yet. Click Summarize." : "Nothing was said in this call."),
+    n.thoughts?.trim() ? [h("div", { class: "label", style: "margin-top:18px" }, "My thoughts"),
+      h("div", { class: "overview", dir: "auto", style: "white-space:pre-wrap" }, n.thoughts)] : null,
     h("div", { class: "panel-tools" }, lang, summarize,
-      n.summary ? h("button", { class: "btn", onclick: () => copyText(n.summary, "Overview copied") }, "Copy overview") : null,
+      n.summary ? h("button", { class: "btn", onclick: () => copyText(n.summary, "Summary copied") }, "Copy summary") : null,
       h("button", { class: "btn", onclick: () => copyText(text, "Transcript copied") }, "Copy transcript"),
       h("button", { class: "btn danger", onclick: async () => {
         if (!confirm("Delete this note and its transcript? This can't be undone.")) return;
@@ -180,8 +182,7 @@ export function wire() {
   listen("note-saved", async (e) => {
     ui.cards = await call("notes");
     await select(e.payload, false);
-    ui.summarizing = true; // the backend is writing the overview now
-    notify("Call saved", "Writing the overview…");
+    notify("Note saved", "Open it and click Summarize when you're ready");
     if (!$("#page-notetaker").hidden) render();
   });
   listen("note-updated", async (e) => {

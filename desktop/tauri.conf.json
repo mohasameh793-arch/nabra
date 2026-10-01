@@ -32,6 +32,18 @@
         "decorations": false,
         "visible": false,
         "center": true
+      },
+      {
+        "label": "meeting",
+        "url": "meeting.html",
+        "title": "Nabra · Note",
+        "width": 440,
+        "height": 640,
+        "minWidth": 360,
+        "minHeight": 420,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "visible": false
       }
     ],
     "security": {

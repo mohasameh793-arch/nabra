@@ -121,20 +121,6 @@ class Llm:
         ], max_tokens=30)
         return text.strip().strip('"«»').splitlines()[0][:80] if text.strip() else ""
 
-    def ask(self, question: str, notes: list[dict]) -> str:
-        """Answer a question from the user's own saved call summaries (newest first)."""
-        context = "\n\n".join(f"### {n.get('title') or 'Call'} ({n.get('date', '')})\n{n.get('summary', '')}"
-                              for n in notes if n.get("summary"))[:12000]
-        if not context:
-            return ""
-        lang = LANGUAGE_NAMES.get(main_language([question]), "English")
-        return self.chat([
-            {"role": "system", "content": "Answer the user's question using ONLY these summaries of their calls. "
-                                          "If the answer isn't there, say so. Be brief. Name the call you used. "
-                                          f"Answer in {lang}.\n\n{context}"},
-            {"role": "user", "content": question},
-        ], max_tokens=1500, reasoning=True, timeout=180)
-
 
 def main_language(lines: list[str]) -> str:
     """Each line votes Arabic or English with its word count. (Counting characters fails: English terms

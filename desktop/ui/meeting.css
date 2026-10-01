@@ -1,0 +1,39 @@
+/* Meeting window: shares hub.css tokens/components; this file only lays out the compact window. */
+body.meeting-window { display: grid; grid-template-rows: 40px 1fr; background: var(--sheet); }
+.meeting-window .titlebar { padding: 0 0 0 12px; border-bottom: 1px solid var(--line); background: var(--canvas); }
+.mw-brand { display: flex; align-items: center; gap: 6px; font-weight: 700; font-size: 13px; }
+.mw-brand .logo { width: 20px; height: 20px; }
+.meeting-window .win-btn { height: 40px; }
+
+.mw { overflow: hidden; display: flex; flex-direction: column; min-height: 0; padding: 18px 20px 14px; gap: 12px; }
+.mw-head h1 { font-size: 20px; margin: 0; font-weight: 600; unicode-bidi: plaintext; }
+.mw-meta { color: var(--muted); font-size: 13px; margin-top: 2px; }
+.mw-live { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.mw-live .rec-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--rec); flex: none; animation: pulse 1.4s ease-in-out infinite; }
+.mw-live.stopped .rec-dot { background: var(--soft); animation: none; }
+.mw-clock { font-variant-numeric: tabular-nums; font-weight: 650; font-size: 18px; }
+.mw-state { color: var(--muted); font-size: 13px; margin-right: auto; }
+.mw-live .btn { padding: 6px 14px; }
+.btn.danger { background: var(--rec); border-color: var(--rec); color: #fff; }
+.mw-live.stopped .btn { display: none; }
+
+.mw-meters { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; align-items: center; margin-top: 12px; font-size: 12.5px; }
+.mw-meters small { color: var(--muted); }
+.mw-live.stopped ~ .mw-meters { display: none; }
+.meter { height: 6px; background: var(--sunk); border-radius: 999px; overflow: hidden; }
+.meter i { display: block; height: 100%; width: 0; background: var(--accent); border-radius: inherit; transition: width 180ms linear; }
+
+.mw-tabs { margin: 4px 0 0; gap: 18px; }
+.mw-tabs .count { color: var(--muted); font-weight: 500; }
+.mw-panel { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 10px; }
+#mw-thoughts {
+  flex: 1; resize: none; border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px;
+  font: 14.5px/1.6 "Segoe UI Variable Text", "Segoe UI", "Noto Sans Arabic", Tahoma, sans-serif; background: var(--card);
+}
+.mw-saved { font-size: 12px; min-height: 16px; }
+.mw-panel .transcript li { grid-template-columns: 50px 1fr; }
+.mw-summary-tools { display: flex; gap: 8px; flex-wrap: wrap; }
+.mw-summary-tools select { width: auto; }
+.mw-panel .overview { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+.mw-wait { text-align: center; color: var(--muted); padding: 36px 16px; display: flex; flex-direction: column; gap: 6px; align-items: center; }
+.mw-wait b { color: var(--ink); font-size: 15px; }

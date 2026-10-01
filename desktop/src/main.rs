@@ -58,6 +58,23 @@ pub fn open_hub(app: &AppHandle, page: Option<&str>) {
     }
 }
 
+/// The meeting window: about a quarter of the screen, on the right, above other windows.
+pub fn show_meeting_window(app: &AppHandle) {
+    let Some(w) = app.get_webview_window("meeting") else { return };
+    if let Ok(Some(m)) = w.primary_monitor() {
+        let (scale, size, pos) = (m.scale_factor(), m.size(), m.position());
+        let width = (size.width as f64 / scale * 0.26).clamp(380.0, 520.0);
+        let height = (size.height as f64 / scale * 0.62).clamp(460.0, 760.0);
+        let _ = w.set_size(tauri::LogicalSize::new(width, height));
+        let x = pos.x + size.width as i32 - ((width + 64.0) * scale) as i32; // leave room for the pill
+        let y = pos.y + (size.height as i32 - (height * scale) as i32) / 2;
+        let _ = w.set_position(tauri::PhysicalPosition::new(x, y));
+    }
+    let _ = w.show();
+    let _ = w.unminimize();
+    let _ = w.set_focus();
+}
+
 /// Start or stop call notes (pill button, Ctrl+Alt+N, or the hub).
 pub fn toggle_meeting(app: &AppHandle) -> Result<(), String> {
     let state = app.state::<App>();
@@ -89,9 +106,10 @@ pub fn toggle_meeting(app: &AppHandle) -> Result<(), String> {
         let title = state.pending_title.lock().unwrap().take()
             .filter(|(_, at)| store::now_ms().saturating_sub(*at) < 15 * 60_000)
             .map(|(t, _)| t);
-        let m = Meeting::start(app.clone(), langs, mic, title)?;
-        let _ = app.emit("meeting", json!({ "active": true, "id": m.id, "elapsed": 0 }));
+        let m = Meeting::start(app.clone(), langs, mic, title.clone())?;
+        let _ = app.emit("meeting", json!({ "active": true, "id": m.id, "elapsed": 0, "title": title }));
         *state.meeting.lock().unwrap() = Some(m);
+        show_meeting_window(app);
     }
     state.tell(Control::Refresh);
     Ok(())
@@ -140,12 +158,28 @@ fn watch_calendar(app: AppHandle) {
     }
 }
 
+/// True if another Nabra is already running for this user. Two copies would both listen to Right Ctrl and
+/// type every dictation twice, so a second launch just exits.
+fn already_running() -> bool {
+    use windows::core::w;
+    use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
+    use windows::Win32::System::Threading::CreateMutexW;
+    unsafe {
+        // Intentionally leaked: the mutex lives exactly as long as this process.
+        let _mutex = CreateMutexW(None, true, w!("Local\\Nabra.SingleInstance"));
+        GetLastError() == ERROR_ALREADY_EXISTS
+    }
+}
+
 fn main() {
+    if already_running() {
+        return;
+    }
     tauri::Builder::default()
         .invoke_handler(commands::handler())
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
-                if window.label() == "hub" {
+                if window.label() == "hub" || window.label() == "meeting" {
                     api.prevent_close(); // closing the hub keeps Nabra running in the tray
                     let _ = window.hide();
                 }

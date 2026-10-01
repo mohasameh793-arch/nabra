@@ -6,7 +6,6 @@ POST /instruction?langs=ar,en                WAV body → {"instruction", "actio
 POST /transform {"text", "instruction"}      → {"text"}  (user-requested rewrite / translation)
 POST /note?langs=ar,en                      WAV body → {"text", "language"}      (calls: no LLM, never stored)
 POST /summary   {"lines": [...], "language": "ar"|null}  → {"summary", "title"}
-POST /ask       {"question", "notes": [{"title", "date", "summary"}]} → {"answer"}
 
 Transcripts are never written to logs.
 """
@@ -90,11 +89,6 @@ class Engine:
         text = self.llm.summarize(lines, language)
         return {"summary": text, "title": self.llm.title(text) if text else ""}
 
-    def ask(self, question: str, notes: list[dict]) -> str:
-        if not self.llm:
-            raise RuntimeError("local AI model is not available")
-        return self.llm.ask(question, notes) or "There are no summarized calls to search yet."
-
     def _keep(self, wav: bytes, result: dict) -> None:
         """Opt-in (--keep-clips): your own dictations become benchmark clips to review later."""
         self.keep_clips.mkdir(parents=True, exist_ok=True)
@@ -139,9 +133,6 @@ def handler_for(engine: Engine):
                 elif url.path == "/summary":
                     req = json.loads(body)
                     self.reply(200, engine.summary(req["lines"], req.get("language")))
-                elif url.path == "/ask":
-                    req = json.loads(body)
-                    self.reply(200, {"answer": engine.ask(req["question"], req.get("notes", []))})
                 else:
                     self.reply(404, {"error": "not found"})
             except RuntimeError as err:

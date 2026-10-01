@@ -217,13 +217,3 @@ pub fn summarize(lines: &Value, language: Option<&str>) -> Result<(String, Strin
         .map_err(|e| e.to_string())?;
     Ok((v["summary"].as_str().unwrap_or_default().into(), v["title"].as_str().unwrap_or_default().into()))
 }
-
-pub fn ask(question: &str, notes: &Value) -> Result<String, String> {
-    let v: Value = ureq::post(&format!("{ENGINE}/ask"))
-        .timeout(Duration::from_secs(300))
-        .send_json(json!({ "question": question, "notes": notes }))
-        .map_err(explain)?
-        .into_json()
-        .map_err(|e| e.to_string())?;
-    Ok(v["answer"].as_str().unwrap_or_default().into())
-}

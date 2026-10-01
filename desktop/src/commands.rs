@@ -243,26 +243,6 @@ async fn summarize_note(app: AppHandle, id: String, language: Option<String>) ->
 }
 
 #[tauri::command]
-async fn ask_notes(app: AppHandle, question: String) -> Res<String> {
-    if question.trim().is_empty() || question.len() > 1000 {
-        return Err("Ask a question (up to 1000 characters)".into());
-    }
-    blocking(move || {
-        let notes: Vec<Value> = app
-            .state::<App>()
-            .store
-            .notes()
-            .into_iter()
-            .filter(|n| n.summary.is_some())
-            .take(20)
-            .map(|n| json!({ "title": n.title, "date": n.started_at, "summary": n.summary }))
-            .collect();
-        sidecar::ask(&question, &Value::Array(notes))
-    })
-    .await
-}
-
-#[tauri::command]
 fn accept_notes_consent(state: State<App>) -> Res<()> {
     let mut s = state.settings.lock().unwrap().clone();
     s.notes_consent = true;
@@ -284,6 +264,38 @@ fn start_notes_for(app: AppHandle, state: State<App>, title: String) -> Res<()> 
 #[tauri::command]
 fn toggle_meeting(app: AppHandle) -> Res<()> {
     crate::toggle_meeting(&app)
+}
+
+/// Saves "My thoughts": into the live meeting while it records, else into the saved note.
+#[tauri::command]
+fn save_thoughts(state: State<App>, id: String, text: String) -> Res<()> {
+    if text.len() > 200_000 {
+        return Err("Your notes are too long to save".into());
+    }
+    if let Some(m) = state.meeting.lock().unwrap().as_ref().filter(|m| m.id == id) {
+        m.set_thoughts(text);
+        return Ok(());
+    }
+    let mut note = state.store.note(&id)?;
+    note.thoughts = text;
+    state.store.save_note(&note)
+}
+
+#[tauri::command]
+fn live_thoughts(state: State<App>) -> String {
+    state.meeting.lock().unwrap().as_ref().map(|m| m.thoughts()).unwrap_or_default()
+}
+
+#[tauri::command]
+fn open_meeting_window(app: AppHandle) {
+    crate::show_meeting_window(&app);
+}
+
+#[tauri::command]
+fn close_meeting_window(app: AppHandle) {
+    if let Some(w) = app.get_webview_window("meeting") {
+        let _ = w.hide();
+    }
 }
 
 #[tauri::command]
@@ -358,11 +370,14 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         note,
         delete_note,
         summarize_note,
-        ask_notes,
         accept_notes_consent,
         toggle_meeting,
         start_notes_for,
         live_lines,
+        save_thoughts,
+        live_thoughts,
+        open_meeting_window,
+        close_meeting_window,
         copy_text,
         pill_hover,
         pill_mic,

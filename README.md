@@ -115,14 +115,14 @@ that, a preview of what was typed. Clicking it never takes the cursor away from 
 | Page | What it's for |
 |---|---|
 | **Dictation** | Your history of everything you've dictated, grouped by day, with search, copy, flag a bad transcription, add a misheard word to the dictionary. Shows total words, words per minute and your daily streak. |
-| **Notetaker** | Meeting notes. The other people (computer audio from Zoom, Meet, Teams, Discord…) are written down as **They**, your microphone as **You**, live. When you stop, Nabra writes a titled **overview**: summary, key points, decisions and action items, in the meeting's language. Ask questions across all your meetings ("what did we decide about pricing?"). Connect your calendar to see today's meetings and get a nudge when one starts. |
+| **Notetaker** | Meeting notes. Starting a note opens a **meeting window** with a live timer, sound meters and three tabs: **My thoughts** (your own notes, saved automatically), **Transcript** (the other people, from Zoom, Meet, Teams, YouTube or any app playing sound, as **They**, your microphone as **You**, live) and **Summary** (after you stop, click **Summarize** for key points, decisions and action items, in the meeting's language). Past notes stay in the Notetaker page. Connect your calendar to see today's meetings and get a nudge when one starts. |
 | **Insights** | Words per minute, fixes Nabra made, total words, the apps you dictate in most, a streak calendar, and **Your voice**: language mix, the hours you dictate, the words you use most. |
 | **Dictionary** | Names, products and jargon Nabra should always spell your way. Add how they sound in Arabic letters (e.g. `Supabase` sounds like «سوبابيس») and they're fixed in mixed dictation too. Also replacements, like `btw` → `by the way`. |
 | **Snippets** | Say a short trigger ("my email", «توقيعي», "meeting link") and Nabra types the full saved text. |
 | **Style** | Formal, casual or very casual writing for each kind of app: personal chats, work chats, email, everything else. Only capital letters and end punctuation change; your words never do. |
 | **Transforms** | How Right Alt editing works, the commands you can say, and a box to try them. |
 | **Scratchpad** | Autosaved drafts: click in, dictate, copy when ready. |
-| **Settings** | Name, appearance (light/dark), start with Windows, microphone, Clean/Raw mode, your languages, overview language, meeting reminders, calendar, AI connections, privacy, models. |
+| **Settings** | Name, appearance (light/dark), start with Windows, microphone, Clean/Raw mode, your languages, summary language, meeting reminders, calendar, AI connections, privacy, models. |
 
 **Clean vs Raw.** *Clean* (the default) fixes punctuation, technical terms and leftovers with the local AI, and a
 built-in guard rejects any AI edit that would translate, rewrite, drop your words or change numbers. *Raw* types
@@ -142,7 +142,7 @@ It only ever forces a language when it's unsure, because forcing one would make 
  Speech engine (Python)         Whisper large-v3 (faster-whisper) · cross-script term fixing · your dictionary
         │                       snippets · styles · voice commands
         │  local HTTP (127.0.0.1 only)
- Local AI (llama.cpp)           Qwen3 8B: guarded cleanup · transforms · meeting overviews · questions about notes
+ Local AI (llama.cpp)           Qwen3 8B: guarded cleanup · transforms · meeting summaries
 ```
 
 - The engine and the AI run as hidden helper processes tied to the app with a Windows *job object*: if Nabra
