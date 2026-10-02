@@ -4,7 +4,7 @@ GET  /health                                → {"device": "cuda", "llm": true}
 POST /dictate?langs=ar,en&mode=clean|raw&style=formal|casual|very_casual   WAV → {"text", "raw", "language", "fixes", "ms"}
 POST /instruction?langs=ar,en                WAV body → {"instruction", "action"}   (Right Alt voice commands)
 POST /transform {"text", "instruction"}      → {"text"}  (user-requested rewrite / translation)
-POST /note?langs=ar,en                      WAV body → {"text", "language"}      (calls: no LLM, never stored)
+POST /note?langs=ar,en[&partial=1]         WAV body → {"text", "language"}      (calls: no LLM, never stored)
 POST /summary   {"lines": [...], "language": "ar"|null}  → {"summary", "title"}
 
 Transcripts are never written to logs.
@@ -67,9 +67,10 @@ class Engine:
             self._keep(wav, result)
         return result
 
-    def note(self, wav: bytes, langs: list[str]) -> dict:
+    def note(self, wav: bytes, langs: list[str], partial: bool = False) -> dict:
+        """partial: live text while someone is still speaking (fast pass; the finished phrase is redone in full)."""
         with self.gpu:
-            raw, language = self.speech.transcribe(wav, langs, self.lexicon.prompt_terms())
+            raw, language = self.speech.transcribe(wav, langs, self.lexicon.prompt_terms(), beam_size=1 if partial else 5)
         return {"text": self.lexicon.restore(raw) if raw else "", "language": language}
 
     def instruction(self, wav: bytes, langs: list[str]) -> dict:
@@ -129,7 +130,7 @@ def handler_for(engine: Engine):
                     req = json.loads(body)
                     self.reply(200, {"text": engine.transform(req["text"], req["instruction"])})
                 elif url.path == "/note":
-                    self.reply(200, engine.note(body, langs))
+                    self.reply(200, engine.note(body, langs, q.get("partial", ["0"])[0] == "1"))
                 elif url.path == "/summary":
                     req = json.loads(body)
                     self.reply(200, engine.summary(req["lines"], req.get("language")))

@@ -1,6 +1,7 @@
 //! Call notes. Computer audio (WASAPI loopback) is "them", the microphone is "you". Each side is cut into
-//! phrases at pauses, transcribed in order, and streamed to the hub. On stop the note is saved and then
-//! summarized + titled in the background.
+//! phrases at pauses, transcribed in order, and streamed to the hub. While someone is still talking, a fast
+//! "partial" pass shows their words live (GPU only); the finished phrase then replaces it. On stop the note
+//! is saved; the summary is written when the user asks.
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -20,7 +21,10 @@ use crate::App;
 const SPEECH_RMS: f32 = 0.01;
 const MIN_PHRASE_S: f32 = 1.5;
 const PAUSE_S: f32 = 0.6;
-const MAX_PHRASE_S: f32 = 20.0;
+const MAX_PHRASE_S: f32 = 12.0; // long monologues still finalize regularly (and partials stay short)
+/// Live text: re-transcribe the phrase in progress this often.
+const PARTIAL_EVERY: Duration = Duration::from_millis(700);
+const MIN_PARTIAL_S: f32 = 0.8;
 const ECHO_WINDOW_S: f32 = 30.0;
 
 /// Collects one source and hands out phrases ending at a pause.
@@ -52,6 +56,11 @@ impl Phrases {
             }
         }
         self.buf.extend_from_slice(samples);
+    }
+
+    /// The phrase still being spoken, for live text: (samples so far, start time) once there's speech.
+    pub fn peek(&self) -> Option<(Vec<f32>, f32)> {
+        (self.secs(self.voiced) >= 0.3 && self.secs(self.buf.len()) >= MIN_PARTIAL_S).then(|| (self.buf.clone(), self.start))
     }
 
     /// A finished phrase as (samples, start time), or None. `flush` ends whatever is buffered.
@@ -105,12 +114,14 @@ impl Meeting {
             ..Default::default()
         }));
         let stop = Arc::new(AtomicBool::new(false));
-        let (phrase_tx, phrase_rx) = channel::<(Source, Vec<f32>, u32, f32)>();
+        let (phrase_tx, phrase_rx) = channel::<Job>();
+        // Live text costs a GPU decode every PARTIAL_EVERY per speaker: only worth it on a GPU.
+        let live = app.state::<App>().engine.lock().unwrap().as_ref().is_some_and(|h| h.device == "cuda");
         let (ready_tx, ready_rx) = channel();
 
         let capture = {
             let (stop, app) = (stop.clone(), app.clone());
-            std::thread::spawn(move || record(app, stop, mic, phrase_tx, ready_tx))
+            std::thread::spawn(move || record(app, stop, mic, live, phrase_tx, ready_tx))
         };
         ready_rx.recv().map_err(|_| "Recording didn't start".to_string())??;
 
@@ -118,34 +129,16 @@ impl Meeting {
             let note = note.clone();
             std::thread::spawn(move || {
                 let mut next_id = 0;
-                for (source, samples, rate, t) in phrase_rx {
-                    let text = match sidecar::note_chunk(&wav(&samples, rate), &langs) {
-                        Ok(text) if !text.is_empty() => text,
-                        Ok(_) => continue,
-                        Err(e) => {
-                            let _ = app.emit("notes-problem", e);
+                while let Ok(first) = phrase_rx.recv() {
+                    // Take everything queued; a partial is stale if a newer job for the same speaker is waiting,
+                    // so live text never falls behind and finished lines are never delayed by it.
+                    let batch: Vec<Job> = std::iter::once(first).chain(phrase_rx.try_iter()).collect();
+                    for (i, job) in batch.iter().enumerate() {
+                        if job.partial && batch[i + 1..].iter().any(|j| j.source == job.source) {
                             continue;
                         }
-                    };
-                    let who = if source == Source::System { "them" } else { "you" };
-                    let mut n = note.lock().unwrap();
-                    let near = |l: &&Line| (l.t - t).abs() < ECHO_WINDOW_S;
-                    if who == "you" && n.lines.iter().filter(near).any(|l| l.who == "them" && is_echo(&l.text, &text)) {
-                        continue;
+                        handle(&app, &note, &langs, job, &mut next_id);
                     }
-                    if who == "them" {
-                        let echoes: Vec<u64> =
-                            n.lines.iter().filter(near).filter(|l| l.who == "you" && is_echo(&l.text, &text)).map(|l| l.id).collect();
-                        n.lines.retain(|l| !echoes.contains(&l.id));
-                        for id in echoes {
-                            let _ = app.emit("note-drop", id);
-                        }
-                    }
-                    let line = Line { id: next_id, who: who.into(), text, t };
-                    next_id += 1;
-                    n.lines.push(line.clone());
-                    n.lines.sort_by(|a, b| a.t.total_cmp(&b.t));
-                    let _ = app.emit("note-line", line);
                 }
             })
         };
@@ -197,11 +190,67 @@ pub fn summarize(app: &AppHandle, id: &str, language: Option<String>) -> Result<
     Ok(note)
 }
 
+/// Audio to transcribe: a finished phrase, or (`partial`) the phrase someone is still saying.
+pub struct Job {
+    source: Source,
+    samples: Vec<f32>,
+    rate: u32,
+    t: f32,
+    partial: bool,
+}
+
+fn handle(app: &AppHandle, note: &Mutex<Note>, langs: &str, job: &Job, next_id: &mut u64) {
+    let who = if job.source == Source::System { "them" } else { "you" };
+    let text = match sidecar::note_chunk(&wav(&job.samples, job.rate), langs, job.partial) {
+        Ok(text) => text,
+        Err(e) => {
+            if !job.partial {
+                let _ = app.emit("notes-problem", e);
+            }
+            String::new()
+        }
+    };
+    let near = |l: &&Line| (l.t - job.t).abs() < ECHO_WINDOW_S;
+    let echo = |n: &Note| who == "you" && n.lines.iter().filter(near).any(|l| l.who == "them" && is_echo(&l.text, &text));
+    if job.partial {
+        // Live text for the phrase in progress; the hub/meeting window replace it when the line is final.
+        if !text.is_empty() && !echo(&note.lock().unwrap()) {
+            let _ = app.emit("note-partial", serde_json::json!({ "who": who, "t": job.t, "text": text }));
+        }
+        return;
+    }
+    let line = {
+        let mut n = note.lock().unwrap();
+        if text.is_empty() || echo(&n) {
+            None
+        } else {
+            if who == "them" {
+                let echoes: Vec<u64> =
+                    n.lines.iter().filter(near).filter(|l| l.who == "you" && is_echo(&l.text, &text)).map(|l| l.id).collect();
+                n.lines.retain(|l| !echoes.contains(&l.id));
+                for id in echoes {
+                    let _ = app.emit("note-drop", id);
+                }
+            }
+            let line = Line { id: *next_id, who: who.into(), text: text.clone(), t: job.t };
+            *next_id += 1;
+            n.lines.push(line.clone());
+            n.lines.sort_by(|a, b| a.t.total_cmp(&b.t));
+            Some(line)
+        }
+    };
+    if let Some(line) = line {
+        let _ = app.emit("note-line", line);
+    }
+    let _ = app.emit("note-partial", serde_json::json!({ "who": who, "t": job.t, "text": "" })); // phrase done
+}
+
 fn record(
     app: AppHandle,
     stop: Arc<AtomicBool>,
     mic: Option<String>,
-    out: Sender<(Source, Vec<f32>, u32, f32)>,
+    live: bool,
+    out: Sender<Job>,
     ready: Sender<Result<(), String>>,
 ) -> Result<(), String> {
     // cpal streams aren't Send: they're opened, read and dropped on this thread only.
@@ -214,11 +263,21 @@ fn record(
     };
     let _ = ready.send(Ok(()));
     let mut sides = [Phrases::new(Source::System, taps[0].rate), Phrases::new(Source::Mic, taps[1].rate)];
+    let mut last_partial = Instant::now();
     let mut pump = |flush: bool| {
+        let partial_due = live && !flush && last_partial.elapsed() >= PARTIAL_EVERY;
+        if partial_due {
+            last_partial = Instant::now();
+        }
         for (tap, side) in taps.iter().zip(sides.iter_mut()) {
             side.feed(&tap.take());
+            let rate = tap.rate;
             if let Some((samples, t)) = side.next(flush) {
-                let _ = out.send((side.source, samples, tap.rate, t));
+                let _ = out.send(Job { source: side.source, samples, rate, t, partial: false });
+            } else if partial_due {
+                if let Some((samples, t)) = side.peek() {
+                    let _ = out.send(Job { source: side.source, samples, rate, t, partial: true });
+                }
             }
         }
     };
@@ -249,6 +308,17 @@ mod tests {
         assert!((p.start - 4.7).abs() < 1e-3);
         p.feed(&[0.3; 500]);
         assert!(p.next(true).is_some(), "flush sends the tail");
+    }
+
+    #[test]
+    fn live_text_only_for_speech_in_progress() {
+        let mut p = Phrases::new(Source::Mic, 1000);
+        p.feed(&[0.0; 1500]);
+        assert!(p.peek().is_none(), "silence has no live text");
+        p.feed(&[0.3; 600]);
+        let (so_far, at) = p.peek().expect("speaking: live text");
+        assert_eq!((so_far.len(), at), (2100, 0.0));
+        assert_eq!(p.buf.len(), 2100, "peeking keeps the phrase going");
     }
 
     #[test]

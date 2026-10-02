@@ -71,7 +71,7 @@ export function render() {
         } }, "Got it, start"))) : null,
     ui.live ? h("div", { class: "card live-card" },
       h("div", { class: "label" }, h("span", { class: "live-dot" }), "Live transcript"),
-      ui.live.lines.length ? transcript(ui.live.lines) : h("p", { class: "muted" }, "Lines appear a few seconds after someone speaks.")) : null,
+      liveLines().length ? transcript(liveLines()) : h("p", { class: "muted" }, "Words appear as people speak.")) : null,
     h("div", { class: "tabs" }, h("button", { "aria-selected": "true" }, "Past notes"), h("span", { class: "grow" }),
       h("input", { type: "search", placeholder: "Search notes", value: ui.query, style: "width:200px;padding:6px 10px",
         "aria-label": "Search notes", oninput: (e) => { ui.query = e.target.value; render(); $("#page-notetaker input[type=search]")?.focus(); } })),
@@ -116,8 +116,11 @@ function pastNotes() {
       h("span", {}, h("b", { dir: "auto" }, c.title), h("small", {}, `${timeOf(c.started_at)} · ${clock(c.seconds)}`))))));
 }
 
+// The live call's finished lines plus what each side is saying right now.
+const liveLines = () => [...ui.live.lines, ...Object.values(ui.live.partials ?? {})].sort((a, b) => a.t - b.t);
+
 function transcript(lines) {
-  return h("ol", { class: "transcript" }, lines.map((l) => h("li", { class: l.who },
+  return h("ol", { class: "transcript" }, lines.map((l) => h("li", { class: l.partial ? `${l.who} partial` : l.who },
     h("div", { class: "who" }, l.who === "you" ? "You" : "They", h("time", {}, clock(l.t))),
     h("div", { class: "said", dir: "auto" }, l.text))));
 }
@@ -168,8 +171,17 @@ export function wire() {
     else ui.live = null;
     if (!$("#page-notetaker").hidden) render();
   });
+  listen("note-partial", (e) => {
+    if (!ui.live) return;
+    const p = e.payload;
+    ui.live.partials ??= {};
+    if (p.text) ui.live.partials[p.who] = { ...p, partial: true };
+    else delete ui.live.partials[p.who];
+    if (!$("#page-notetaker").hidden) render();
+  });
   listen("note-line", (e) => {
     if (!ui.live) return;
+    if (ui.live.partials) delete ui.live.partials[e.payload.who];
     ui.live.lines.push(e.payload);
     ui.live.lines.sort((a, b) => a.t - b.t);
     if (!$("#page-notetaker").hidden) render();

@@ -410,3 +410,11 @@ kbd { font: 600 12px "Segoe UI", sans-serif; background: var(--sunk); border: 1p
 .update-banner .bar { width: 110px; height: 6px; border-radius: 999px; background: var(--sunk); overflow: hidden; }
 .update-banner .bar i { display: block; height: 100%; background: var(--accent); border-radius: inherit; transition: width 200ms linear; }
 @keyframes banner-in { from { opacity: 0; transform: translateY(10px); } }
+
+/* live text: the phrase someone is still saying */
+.transcript li.partial .said { color: var(--muted); }
+.transcript li.partial .said::after {
+  content: ""; display: inline-block; width: 2px; height: 1em; margin-inline-start: 3px; vertical-align: -2px;
+  background: var(--accent); animation: caret 1s steps(1) infinite;
+}
+@keyframes caret { 50% { opacity: 0; } }

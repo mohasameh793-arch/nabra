@@ -198,8 +198,9 @@ pub fn transform(text: &str, instruction: &str) -> Result<String, String> {
     Ok(v["text"].as_str().unwrap_or_default().into())
 }
 
-pub fn note_chunk(wav: &[u8], langs: &str) -> Result<String, String> {
-    let v: Value = ureq::post(&format!("{ENGINE}/note?langs={langs}"))
+/// `partial`: live text for a phrase that's still being spoken (fast pass).
+pub fn note_chunk(wav: &[u8], langs: &str, partial: bool) -> Result<String, String> {
+    let v: Value = ureq::post(&format!("{ENGINE}/note?langs={langs}&partial={}", partial as u8))
         .timeout(Duration::from_secs(120))
         .send_bytes(wav)
         .map_err(explain)?

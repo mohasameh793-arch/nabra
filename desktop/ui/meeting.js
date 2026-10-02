@@ -59,14 +59,17 @@ async function saveThoughts() {
 }
 
 // ---------- transcript ----------
+// Live text: the phrase each side is still saying (grey, updating); replaced by the finished line.
+const partials = {};
 function lineEl(l) {
-  return h("li", { class: l.who, "data-id": l.id },
+  return h("li", { class: l.partial ? `${l.who} partial` : l.who, "data-id": l.id },
     h("div", { class: "who" }, l.who === "you" ? "You" : "They", h("time", {}, clock(l.t))),
     h("div", { class: "said", dir: "auto" }, l.text));
 }
 function drawTranscript() {
-  $("#mw-transcript").replaceChildren(...note.lines.map(lineEl));
-  $("#mw-transcript-empty").hidden = note.lines.length > 0;
+  const shown = [...note.lines, ...Object.values(partials)].sort((a, b) => a.t - b.t);
+  $("#mw-transcript").replaceChildren(...shown.map(lineEl));
+  $("#mw-transcript-empty").hidden = shown.length > 0;
   $("#mw-count").textContent = note.lines.length ? `· ${note.lines.length}` : "";
 }
 
@@ -128,13 +131,28 @@ listen("meeting", async (e) => {
     showTab("thoughts");
   } else {
     note.live = false;
+    for (const who in partials) delete partials[who];
     note.seconds = (Date.now() - note.started) / 1000;
     drawHead();
     drawSummary();
   }
 });
+function stickToBottom(draw) {
+  const box = $("#tab-transcript");
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+  draw();
+  if (atBottom) box.scrollTop = box.scrollHeight;
+}
+listen("note-partial", (e) => {
+  if (!note.live) return;
+  const p = e.payload;
+  if (p.text) partials[p.who] = { ...p, id: `live-${p.who}`, partial: true };
+  else delete partials[p.who];
+  stickToBottom(drawTranscript);
+});
 listen("note-line", (e) => {
   if (!note.live) return;
+  delete partials[e.payload.who];
   note.lines.push(e.payload);
   note.lines.sort((a, b) => a.t - b.t);
   const box = $("#tab-transcript");

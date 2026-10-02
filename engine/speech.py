@@ -54,8 +54,8 @@ class Transcriber:
         in_list = [(code, p) for code, p in ranked if code in allowed]
         return max(in_list, key=lambda x: x[1])[0] if in_list else allowed[0]
 
-    def transcribe(self, wav: bytes, allowed: list[str], vocabulary: list[str]) -> tuple[str, str | None]:
-        """Returns (text, language)."""
+    def transcribe(self, wav: bytes, allowed: list[str], vocabulary: list[str], beam_size: int = 5) -> tuple[str, str | None]:
+        """Returns (text, language). beam_size=1 is the fast pass for live (still-speaking) call text."""
         from faster_whisper import decode_audio
 
         audio = decode_audio(io.BytesIO(wav), sampling_rate=SAMPLE_RATE)
@@ -65,6 +65,6 @@ class Transcriber:
         arabic_in_play = not allowed or "ar" in allowed
         prompt = (MIXED_EXAMPLE + " " if arabic_in_play else "") + ", ".join(vocabulary) + "."
         segments, info = self.model.transcribe(
-            audio, language=forced, multilingual=forced is None, vad_filter=True, beam_size=5,
+            audio, language=forced, multilingual=forced is None, vad_filter=True, beam_size=beam_size,
             initial_prompt=prompt)
         return " ".join(s.text.strip() for s in segments).strip(), forced or info.language
