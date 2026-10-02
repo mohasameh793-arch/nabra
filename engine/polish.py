@@ -21,14 +21,15 @@ CLEANUP_EXAMPLES = [
     ("نرجو منكم الحضور في الموعد المحدد", "نرجو منكم الحضور في الموعد المحدد."),
 ]
 
-SUMMARY_RULES = """You summarize a call transcript. Lines start with THEM (other people) or ME (the user).
+SUMMARY_RULES = """You summarize a call transcript. Lines start with ME (the user), a person's name, or THEM (someone
+else whose name isn't known).
 Write everything in {language}; keep technical terms, products, and names exactly as spoken.
 Only use what is in the transcript. Never invent names, dates, or numbers.
 Separate what is DONE from what is still PENDING. Pending markers include "باقي", "لسه", "still", "not yet",
 and future forms: Gulf/Levantine "بـ" + verb (بضيف = I will add), "راح"/"رح", "ح"/"هـ" (Egyptian), "سـ"/"سوف",
 "I'll", "will", "going to". Only mark something done when the speaker says it is finished (خلصت، سويت، done).
-In action items write the user as "I"/"أنا" (in the summary language) and others as "they"/"هم",
-never the labels ME or THEM.
+In action items write the user as "I"/"أنا" (in the summary language), named people by their name, and others
+as "they"/"هم", never the labels ME or THEM.
 Use Markdown with these sections, headings translated into {language}, skipping empty ones:
 ## Summary
 (two or three sentences)
@@ -79,7 +80,7 @@ class Llm:
         system = SUMMARY_RULES.format(language=LANGUAGE_NAMES.get(code, code))
         parts, buf = [], ""
         for l in spoken:
-            row = f"{'ME' if l['who'] == 'you' else 'THEM'}: {l['text']}\n"
+            row = f"{'ME' if l['who'] == 'you' else (l.get('name') or 'THEM')}: {l['text']}\n"
             if buf and len(buf) + len(row) > PART_CHARS:
                 parts.append(buf)
                 buf = ""

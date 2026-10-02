@@ -214,7 +214,7 @@ input[type=text], input[type=search], select, textarea {
 .live-card { padding: 18px 20px; margin-bottom: 26px; border-color: color-mix(in srgb, var(--rec) 40%, var(--line)); }
 .live-card .label { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; color: var(--rec); }
 .transcript { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
-.transcript li { display: grid; grid-template-columns: 58px 1fr; gap: 10px; align-items: baseline; }
+.transcript li { display: grid; grid-template-columns: 84px 1fr; gap: 10px; align-items: baseline; }
 .transcript .who { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
 .transcript .who time { display: block; font-weight: 500; letter-spacing: 0; }
 .transcript .said { background: var(--sunk); border-radius: 10px; padding: 8px 12px; unicode-bidi: plaintext; overflow-wrap: anywhere; }
@@ -418,3 +418,20 @@ kbd { font: 600 12px "Segoe UI", sans-serif; background: var(--sunk); border: 1p
   background: var(--accent); animation: caret 1s steps(1) infinite;
 }
 @keyframes caret { 50% { opacity: 0; } }
+
+/* speakers in call notes */
+.who-name { all: unset; white-space: nowrap; cursor: pointer; font: inherit; color: inherit; border-radius: 4px; }
+.who-name:hover, .who-name:focus-visible { background: var(--hover); outline: none; }
+.who-name.unnamed { border-bottom: 1px dashed var(--soft); }
+.namer {
+  position: fixed; z-index: 90; width: 260px; padding: 12px; border-radius: 12px; display: grid; gap: 10px;
+  background: var(--card); border: 1px solid var(--line); box-shadow: var(--shadow); font-size: 13px;
+}
+.namer .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.namer .row { display: flex; gap: 6px; }
+.namer input { flex: 1; min-width: 0; }
+.chip { border: 1px solid var(--line); background: var(--sunk); border-radius: 999px; padding: 3px 10px; font-size: 12.5px; color: var(--ink); cursor: pointer; }
+button.chip:hover { background: var(--hover); }
+.link { border: 0; background: none; color: var(--accent); cursor: pointer; font: inherit; font-size: 12.5px; padding: 2px 4px; }
+.people-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0 4px; font-size: 12.5px; }
+.people-bar .add-person { width: 110px; padding: 3px 8px; border-radius: 999px; font-size: 12.5px; }

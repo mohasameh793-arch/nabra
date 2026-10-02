@@ -10,6 +10,8 @@ pub struct Event {
     pub start: i64, // unix ms
     pub end: i64,
     pub all_day: bool,
+    /// People invited (organizer first), for naming speakers in call notes.
+    pub attendees: Vec<String>,
 }
 
 pub fn fetch(url: &str) -> Result<String, String> {
@@ -73,6 +75,17 @@ struct Raw {
     end: Option<DateTime<Local>>,
     rrule: Option<String>,
     exdates: Vec<i64>,
+    attendees: Vec<String>,
+}
+
+/// "ATTENDEE;CN=Ahmed Ali;ROLE=…" + "mailto:ahmed@x.com" → "Ahmed Ali" (or "ahmed" when there's no CN).
+fn person(key: &str, value: &str) -> Option<String> {
+    let cn = key.split(';').find_map(|p| p.strip_prefix("CN=")).map(|n| n.trim_matches('"').trim().to_string());
+    let name = cn.filter(|n| !n.is_empty() && !n.contains('@')).or_else(|| {
+        let mail = value.trim_start_matches("mailto:").trim_start_matches("MAILTO:");
+        mail.split('@').next().filter(|s| !s.is_empty()).map(|s| s.replace(['.', '_'], " "))
+    })?;
+    Some(name)
 }
 
 /// Occurrences of `ev` that overlap [from, to). Supports DAILY/WEEKLY with INTERVAL, BYDAY, UNTIL, COUNT, EXDATE.
@@ -84,6 +97,7 @@ fn occurrences(ev: &Raw, from: DateTime<Local>, to: DateTime<Local>) -> Vec<Even
         start: s.timestamp_millis(),
         end: (s + length).timestamp_millis(),
         all_day,
+        attendees: ev.attendees.clone(),
     };
     let Some(rule) = &ev.rrule else {
         return if start < to && start + length > from { vec![make(start)] } else { vec![] };
@@ -142,6 +156,11 @@ pub fn upcoming(ics: &str, days: i64) -> Vec<Event> {
             "DTEND" => ev.end = parse_time(value).map(|(t, _)| t),
             "RRULE" => ev.rrule = Some(value.to_string()),
             "EXDATE" => ev.exdates.extend(value.split(',').filter_map(parse_time).map(|(t, _)| t.timestamp_millis())),
+            "ORGANIZER" | "ATTENDEE" => {
+                if let Some(p) = person(key, value).filter(|p| !ev.attendees.contains(p)) {
+                    ev.attendees.push(p);
+                }
+            }
             _ => {}
         }
     }

@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod assets;
+mod attendees;
 mod autostart;
 mod calendar;
 mod commands;
@@ -116,7 +117,17 @@ pub fn toggle_meeting(app: &AppHandle) -> Result<(), String> {
         let title = state.pending_title.lock().unwrap().take()
             .filter(|(_, at)| store::now_ms().saturating_sub(*at) < 15 * 60_000)
             .map(|(t, _)| t);
-        let m = Meeting::start(app.clone(), langs, mic, title.clone())?;
+        // Who's invited: the calendar event happening now (started up to 15 min ago, or starting within 10).
+        let now = store::now_ms() as i64;
+        let event = state.calendar.lock().unwrap().iter()
+            .find(|e| !e.all_day && e.start - 10 * 60_000 <= now && now <= e.end.max(e.start + 15 * 60_000))
+            .cloned();
+        let title = title.or_else(|| event.as_ref().map(|e| e.title.clone()));
+        let attendees = event.map(|e| e.attendees).unwrap_or_default();
+        let m = Meeting::start(app.clone(), langs, mic, title.clone(), attendees)?;
+        let (id, scan_app) = (m.id.clone(), app.clone());
+        // …and whoever the meeting app shows on screen (Zoom / Teams / Meet), found in the background.
+        std::thread::spawn(move || meeting::add_attendees(&scan_app, &id, attendees::scan()));
         let _ = app.emit("meeting", json!({ "active": true, "id": m.id, "elapsed": 0, "title": title }));
         *state.meeting.lock().unwrap() = Some(m);
         show_meeting_window(app);
@@ -222,6 +233,12 @@ fn main() {
                 offered: Mutex::new(None),
             });
             updater::watch(app.handle().clone());
+            // Voice model for "who is speaking" in call notes (small; first run or after updating).
+            std::thread::spawn(|| {
+                if let Err(e) = assets::ensure_voice_model() {
+                    eprintln!("voice model: {e}"); // offline: call notes still work, without speaker names
+                }
+            });
             let watcher = app.handle().clone();
             std::thread::spawn(move || watch_calendar(watcher));
             pill::init(app.handle());

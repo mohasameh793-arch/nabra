@@ -315,6 +315,40 @@ fn live_lines(state: State<App>) -> Vec<Line> {
     state.meeting.lock().unwrap().as_ref().map(|m| m.lines()).unwrap_or_default()
 }
 
+/// Speakers + attendee names of the live call or a saved note.
+#[tauri::command]
+fn note_speakers(state: State<App>, id: String) -> Res<Value> {
+    if let Some(m) = state.meeting.lock().unwrap().as_ref().filter(|m| m.id == id) {
+        return Ok(crate::meeting::speakers_json(&m.note.lock().unwrap()));
+    }
+    Ok(crate::meeting::speakers_json(&state.store.note(&id)?))
+}
+
+/// Name a voice ("Speaker 2" → "Zaid"); Nabra recognises it in later calls.
+#[tauri::command]
+fn name_speaker(app: AppHandle, id: String, speaker: String, name: String) -> Res<Value> {
+    crate::meeting::name_speaker(&app, &id, &speaker, &name)
+}
+
+/// Add a name by hand, or (`scan`) look at the meeting app on screen again (e.g. after opening its participant list).
+#[tauri::command]
+async fn add_attendees(app: AppHandle, id: String, names: Vec<String>, scan: bool) -> Res<()> {
+    blocking(move || {
+        let mut names = names;
+        if scan {
+            names.extend(crate::attendees::scan());
+        }
+        crate::meeting::add_attendees(&app, &id, names);
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
+fn forget_voices(state: State<App>) -> Res<()> {
+    state.store.forget_voices()
+}
+
 #[tauri::command]
 fn copy_text(text: String) -> Res<()> {
     keyboard::copy(&text)
@@ -359,6 +393,10 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         microphones,
         check_updates,
         install_update,
+        note_speakers,
+        name_speaker,
+        add_attendees,
+        forget_voices,
         set_autostart,
         history,
         edit_dictation,

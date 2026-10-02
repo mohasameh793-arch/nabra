@@ -1,5 +1,6 @@
 // The meeting window: header with timer, sound meters, Stop; tabs My thoughts · Transcript · Summary.
 import { $, h, call, listen, clock, timeOf, markdown, languageSelect, copyText, toast, getTheme, setTheme, state } from "./js/core.js";
+import { people, whoCell, whoLabel, peopleBar } from "./js/speakers.js";
 
 setTheme(getTheme());
 const win = window.__TAURI__.window.getCurrentWindow();
@@ -10,9 +11,15 @@ const note = { id: null, started: 0, title: "", live: false, lines: [], summary:
 let ticker = null;
 let saveTimer = null;
 let summarizing = false;
+let ppl = people(null); // speaker names + attendees of the note on screen
 
 // ---------- header ----------
+function drawPeople() {
+  $("#mw-people").replaceChildren(peopleBar(ppl, note.id, note.live));
+}
+
 function drawHead() {
+  drawPeople();
   $("#mw-title").textContent = note.title || "New note";
   const d = new Date(note.started || Date.now());
   $("#mw-meta").textContent = `${d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} · started ${timeOf(d.getTime())}`;
@@ -63,7 +70,7 @@ async function saveThoughts() {
 const partials = {};
 function lineEl(l) {
   return h("li", { class: l.partial ? `${l.who} partial` : l.who, "data-id": l.id },
-    h("div", { class: "who" }, l.who === "you" ? "You" : "They", h("time", {}, clock(l.t))),
+    whoCell(l, ppl, note.id, h("time", {}, clock(l.t))),
     h("div", { class: "said", dir: "auto" }, l.text));
 }
 function drawTranscript() {
@@ -109,6 +116,7 @@ function drawSummary() {
 async function loadLive(meeting) {
   Object.assign(note, { id: meeting.id, started: Date.now() - (meeting.elapsed ?? 0) * 1000, title: meeting.title ?? "",
     live: true, lines: await call("live_lines"), summary: null, seconds: 0 });
+  ppl = people(await call("note_speakers", { id: meeting.id }).catch(() => null));
   $("#mw-thoughts").value = await call("live_thoughts");
   $("#mw-saved").textContent = "";
   drawHead();
@@ -119,6 +127,7 @@ async function loadLive(meeting) {
 async function loadSaved(id) {
   const n = await call("note", { id });
   Object.assign(note, { id: n.id, started: n.started_at, title: n.title, live: false, lines: n.lines, summary: n.summary, seconds: n.seconds });
+  ppl = people(n);
   if (document.activeElement !== $("#mw-thoughts")) $("#mw-thoughts").value = n.thoughts ?? "";
   drawHead();
   drawTranscript();
@@ -159,6 +168,12 @@ listen("note-line", (e) => {
   const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
   drawTranscript();
   if (atBottom) box.scrollTop = box.scrollHeight;
+});
+listen("note-speakers", (e) => {
+  if (e.payload.id !== note.id) return;
+  ppl = people(e.payload);
+  drawPeople();
+  drawTranscript();
 });
 listen("note-drop", (e) => {
   note.lines = note.lines.filter((l) => l.id !== e.payload);

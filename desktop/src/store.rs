@@ -224,6 +224,28 @@ pub struct Line {
     pub who: String, // "them" | "you"
     pub text: String,
     pub t: f32,      // seconds since the call started
+    /// Which voice on the other side said it ("s1", "s2"…); the name lives in `Note::speakers`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speaker: Option<String>,
+}
+
+/// A voice heard on the other side of a call. `voice` is its voiceprint (numbers, never audio).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Speaker {
+    pub id: String,
+    pub name: String, // "" until named
+    pub voice: Vec<f32>,
+    pub phrases: u32,
+}
+
+/// A voice the user has named, recognised automatically in later calls.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct KnownVoice {
+    pub name: String,
+    pub voice: Vec<f32>,
+    pub phrases: u32,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -237,6 +259,9 @@ pub struct Note {
     /// The user's own notes typed during the meeting ("My thoughts").
     pub thoughts: String,
     pub lines: Vec<Line>,
+    pub speakers: Vec<Speaker>,
+    /// Names found when the call started (calendar invite, meeting window), offered when naming speakers.
+    pub attendees: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -295,6 +320,38 @@ impl Store {
         let words: Vec<Word> = self.words().into_iter().filter(|w| w.id != id).collect();
         write_atomic(&self.dictionary_path(), &serde_json::to_vec_pretty(&words).unwrap())?;
         Ok(words)
+    }
+
+    fn voices_path(&self) -> PathBuf {
+        self.dir.join("voices.json")
+    }
+
+    /// Voices the user has named in earlier calls.
+    pub fn known_voices(&self) -> Vec<KnownVoice> {
+        read_json(&self.voices_path())
+    }
+
+    /// Remember (or refine) `name`'s voice. Averaging over calls makes recognition steadier.
+    pub fn remember_voice(&self, name: &str, voice: &[f32], phrases: u32) -> Result<(), String> {
+        let mut all = self.known_voices();
+        match all.iter_mut().find(|k| k.name.eq_ignore_ascii_case(name)) {
+            Some(k) if k.voice.len() == voice.len() => {
+                let (a, b) = (k.phrases.max(1) as f32, phrases.max(1) as f32);
+                k.voice = crate::meeting::unit(k.voice.iter().zip(voice).map(|(x, y)| x * a + y * b).collect());
+                k.phrases += phrases;
+            }
+            Some(k) => *k = KnownVoice { name: name.into(), voice: voice.to_vec(), phrases },
+            None => all.push(KnownVoice { name: name.into(), voice: voice.to_vec(), phrases }),
+        }
+        write_atomic(&self.voices_path(), &serde_json::to_vec(&all).unwrap())
+    }
+
+    /// Forget every saved voice (Settings → Privacy).
+    pub fn forget_voices(&self) -> Result<(), String> {
+        match fs::remove_file(self.voices_path()) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+            _ => Ok(()),
+        }
     }
 
     pub fn snippets_path(&self) -> PathBuf {

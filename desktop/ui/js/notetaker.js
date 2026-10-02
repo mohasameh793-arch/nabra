@@ -1,5 +1,6 @@
 // Notetaker: start/stop call notes, live They/You transcript, past notes, overview panel, ask your notes.
 import { $, h, ICONS, iconBtn, call, copyText, byDay, timeOf, clock, markdown, languageSelect, state, toast, notify, listen } from "./core.js";
+import { people, whoCell, whoLabel, peopleBar } from "./speakers.js";
 import { openSettings } from "./settings.js";
 
 let events = [];
@@ -24,7 +25,8 @@ export async function load() {
 }
 
 export function startLive(meeting, lines = []) {
-  ui.live = { id: meeting.id, started: Date.now() - (meeting.elapsed ?? 0) * 1000, lines };
+  ui.live = { id: meeting.id, started: Date.now() - (meeting.elapsed ?? 0) * 1000, lines, ppl: people(null) };
+  call("note_speakers", { id: meeting.id }).then((j) => { if (ui.live?.id === meeting.id) ui.live.ppl = people(j); }).catch(() => {});
 }
 
 async function select(id, rerender = true) {
@@ -71,7 +73,8 @@ export function render() {
         } }, "Got it, start"))) : null,
     ui.live ? h("div", { class: "card live-card" },
       h("div", { class: "label" }, h("span", { class: "live-dot" }), "Live transcript"),
-      liveLines().length ? transcript(liveLines()) : h("p", { class: "muted" }, "Words appear as people speak.")) : null,
+      peopleBar(ui.live.ppl, ui.live.id, true),
+      liveLines().length ? transcript(liveLines(), ui.live.ppl, ui.live.id) : h("p", { class: "muted" }, "Words appear as people speak.")) : null,
     h("div", { class: "tabs" }, h("button", { "aria-selected": "true" }, "Past notes"), h("span", { class: "grow" }),
       h("input", { type: "search", placeholder: "Search notes", value: ui.query, style: "width:200px;padding:6px 10px",
         "aria-label": "Search notes", oninput: (e) => { ui.query = e.target.value; render(); $("#page-notetaker input[type=search]")?.focus(); } })),
@@ -119,9 +122,9 @@ function pastNotes() {
 // The live call's finished lines plus what each side is saying right now.
 const liveLines = () => [...ui.live.lines, ...Object.values(ui.live.partials ?? {})].sort((a, b) => a.t - b.t);
 
-function transcript(lines) {
+function transcript(lines, ppl = people(null), noteId = null) {
   return h("ol", { class: "transcript" }, lines.map((l) => h("li", { class: l.partial ? `${l.who} partial` : l.who },
-    h("div", { class: "who" }, l.who === "you" ? "You" : "They", h("time", {}, clock(l.t))),
+    whoCell(l, ppl, noteId, h("time", {}, clock(l.t))),
     h("div", { class: "said", dir: "auto" }, l.text))));
 }
 
@@ -140,7 +143,8 @@ function panel() {
       render();
     }
   } }, ui.summarizing ? "Summarizing…" : n.summary ? "Summarize again" : "Summarize");
-  const text = n.lines.map((l) => `[${clock(l.t)}] ${l.who === "you" ? "You" : "They"}: ${l.text}`).join("\n");
+  const ppl = people(n);
+  const text = n.lines.map((l) => `[${clock(l.t)}] ${whoLabel(l, ppl)}: ${l.text}`).join("\n");
   return h("aside", { class: "notes-panel" },
     h("h2", { dir: "auto" }, n.title || "Untitled call"),
     h("div", { class: "meta" }, `${new Date(n.started_at).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" })} • ${timeOf(n.started_at)}`),
@@ -159,7 +163,7 @@ function panel() {
         await load();
         render();
       } }, "Delete")),
-    n.lines.length ? h("details", { class: "full" }, h("summary", {}, `Transcript · ${n.lines.length} lines`), transcript(n.lines)) : null);
+    n.lines.length ? h("details", { class: "full" }, h("summary", {}, `Transcript · ${n.lines.length} lines`), transcript(n.lines, ppl, n.id)) : null);
 }
 
 // ---------- live events ----------
@@ -184,6 +188,12 @@ export function wire() {
     if (ui.live.partials) delete ui.live.partials[e.payload.who];
     ui.live.lines.push(e.payload);
     ui.live.lines.sort((a, b) => a.t - b.t);
+    if (!$("#page-notetaker").hidden) render();
+  });
+  listen("note-speakers", async (e) => {
+    const id = e.payload.id;
+    if (ui.live?.id === id) ui.live.ppl = people(e.payload);
+    if (ui.selected?.id === id) ui.selected = await call("note", { id });
     if (!$("#page-notetaker").hidden) render();
   });
   listen("note-drop", (e) => {

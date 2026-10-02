@@ -40,6 +40,32 @@ pub fn cuda() -> PathBuf {
 pub fn llama_server() -> PathBuf {
     dir().join("llama").join("llama-server.exe")
 }
+/// Speaker-recognition model for call notes (who is speaking). Not part of setup: ~26 MB, fetched in the
+/// background by `ensure_voice_model`, so existing installs get it without going through setup again.
+const VOICE_MODEL_URL: &str =
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/wespeaker_en_voxceleb_resnet34_LM.onnx";
+const VOICE_MODEL_SHA256: &str = "e9848563da86f263117134dfd7ad63c92355b37de492b55e325400c9d9c39012";
+const VOICE_MODEL_BYTES: u64 = 26_530_550;
+
+pub fn voice_model() -> PathBuf {
+    dir().join("voice").join("wespeaker_resnet34.onnx")
+}
+
+/// Downloads the voice model if it's missing (verified by SHA-256; resumes a partial download).
+pub fn ensure_voice_model() -> Result<(), String> {
+    if voice_model().exists() {
+        return Ok(());
+    }
+    let f = Fetch {
+        url: VOICE_MODEL_URL.into(),
+        dest: voice_model(),
+        size: VOICE_MODEL_BYTES,
+        sha256: Some(VOICE_MODEL_SHA256.into()),
+        unzip: None,
+    };
+    fetch(&f, |_| {})
+}
+
 pub fn qwen() -> PathBuf {
     dir().join("models").join(QWEN_FILE)
 }

@@ -122,7 +122,13 @@ async function body() {
             state.history = [];
             document.dispatchEvent(new CustomEvent("history-cleared"));
             toast("History deleted");
-          } }, "Delete all"))];
+          } }, "Delete all")),
+        field("Forget saved voices", "Call notes remember the voices you name (as numbers, never audio) to label them in later calls. This forgets them all; your notes keep their names.",
+          h("button", { class: "btn danger", onclick: async () => {
+            if (!confirm("Forget every saved voice? Speakers will show as Speaker 1, 2… until you name them again.")) return;
+            await call("forget_voices");
+            toast("Saved voices forgotten");
+          } }, "Forget voices"))];
     }
     case "about": {
       const e = state.boot.engine;

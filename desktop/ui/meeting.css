@@ -31,7 +31,7 @@ body.meeting-window { display: grid; grid-template-rows: 40px 1fr; background: v
   font: 14.5px/1.6 "Segoe UI Variable Text", "Segoe UI", "Noto Sans Arabic", Tahoma, sans-serif; background: var(--card);
 }
 .mw-saved { font-size: 12px; min-height: 16px; }
-.mw-panel .transcript li { grid-template-columns: 50px 1fr; }
+.mw-panel .transcript li { grid-template-columns: 84px 1fr; } /* room for "Speaker 2" or a name */
 .mw-summary-tools { display: flex; gap: 8px; flex-wrap: wrap; }
 .mw-summary-tools select { width: auto; }
 .mw-panel .overview { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }

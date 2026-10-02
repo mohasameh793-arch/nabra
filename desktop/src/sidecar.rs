@@ -122,6 +122,8 @@ pub fn start(app: &tauri::AppHandle, opts: Launch) -> Result<(), String> {
     if opts.keep_clips {
         args.extend(["--keep-clips".into(), opts.clips.display().to_string()]);
     }
+    // Downloaded in the background on first run (see assets::ensure_voice_model); loaded on first use.
+    args.extend(["--voice-model".into(), assets::voice_model().display().to_string()]);
     launch(job, &program, &args, &cwd, &logs.join("engine.log"))
 }
 
@@ -207,6 +209,17 @@ pub fn note_chunk(wav: &[u8], langs: &str, partial: bool) -> Result<String, Stri
         .into_json()
         .map_err(|e| e.to_string())?;
     Ok(v["text"].as_str().unwrap_or_default().trim().to_string())
+}
+
+/// The phrase's voiceprint ([] if too short or the voice model isn't downloaded).
+pub fn voice(wav: &[u8]) -> Result<Vec<f32>, String> {
+    let v: Value = ureq::post(&format!("{ENGINE}/voice"))
+        .timeout(Duration::from_secs(30))
+        .send_bytes(wav)
+        .map_err(explain)?
+        .into_json()
+        .map_err(|e| e.to_string())?;
+    Ok(v["voice"].as_array().map(|a| a.iter().filter_map(|x| x.as_f64()).map(|x| x as f32).collect()).unwrap_or_default())
 }
 
 pub fn summarize(lines: &Value, language: Option<&str>) -> Result<(String, String), String> {

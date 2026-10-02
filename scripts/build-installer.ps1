@@ -16,7 +16,8 @@ Set-Location $root
     --paths engine `
     --add-data "$root\engine\lexicon_builtin.tsv;." `
     --collect-all faster_whisper --collect-all ctranslate2 --collect-binaries onnxruntime --collect-binaries av `
-    --hidden-import mcp_notes --hidden-import service `
+    --collect-all sherpa_onnx `
+    --hidden-import mcp_notes --hidden-import service --hidden-import voices `
     --exclude-module nvidia --exclude-module tkinter --exclude-module matplotlib `
     engine\__main__.py
 if ($LASTEXITCODE) { throw "PyInstaller failed" }
@@ -24,6 +25,9 @@ if ($LASTEXITCODE) { throw "PyInstaller failed" }
 # 2. Smoke test the frozen engine: MCP mode answers without loading any model.
 $reply = '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | & build\engine\nabra-engine\nabra-engine.exe --mcp --notes $env:TEMP
 if ($reply -notmatch "list_notes") { throw "Frozen engine smoke test failed: $reply" }
+#    …and the voice model (who is speaking in call notes) loads and makes a voiceprint.
+$voice = & build\engine\nabra-engine\nabra-engine.exe --voice-check "$root\.assets\voice\wespeaker_en_voxceleb_resnet34_LM.onnx"
+if ($voice -notmatch "voiceprint 256") { throw "Frozen engine voice check failed: $voice" }
 
 # 3. Build the app + NSIS installer with the engine bundled as a resource.
 Push-Location desktop

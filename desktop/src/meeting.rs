@@ -14,7 +14,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::sidecar;
 use crate::sound::{wav, Source, Tap};
-use crate::store::{now_ms, Line, Note};
+use crate::store::{now_ms, KnownVoice, Line, Note, Speaker};
 use crate::App;
 
 // ponytail: fixed energy gate (~-40 dBFS); switch to an adaptive noise floor if noisy rooms need it.
@@ -26,6 +26,86 @@ const MAX_PHRASE_S: f32 = 12.0; // long monologues still finalize regularly (and
 const PARTIAL_EVERY: Duration = Duration::from_millis(700);
 const MIN_PARTIAL_S: f32 = 0.8;
 const ECHO_WINDOW_S: f32 = 30.0;
+
+// ponytail: one fixed similarity bar (cosine, WeSpeaker ResNet34). Raise it if two people get merged, lower it
+// if one person splits into two; per-call adaptive clustering if fixed bars prove too blunt.
+pub const SAME_VOICE: f32 = 0.62;
+/// A phrase too short for a voiceprint goes to whoever spoke last on that side, if they spoke this recently.
+const SAME_TURN_S: f32 = 8.0;
+
+pub fn unit(mut v: Vec<f32>) -> Vec<f32> {
+    let n = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if n > 0.0 {
+        v.iter_mut().for_each(|x| *x /= n);
+    }
+    v
+}
+
+fn similarity(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() {
+        return 0.0;
+    }
+    a.iter().zip(b).map(|(x, y)| x * y).sum()
+}
+
+/// Tells the voices on the other side apart: named voices from earlier calls first, then voices heard in
+/// this call, else a new "Speaker N".
+pub struct Voices {
+    known: Vec<KnownVoice>,
+    last: Option<(String, f32)>, // (speaker id, end time) of the latest phrase
+}
+
+impl Voices {
+    pub fn new(known: Vec<KnownVoice>) -> Self {
+        Self { known, last: None }
+    }
+
+    /// Returns the speaker id for a phrase at `t`..`end`; `changed` is set when the speaker list changed.
+    pub fn assign(&mut self, speakers: &mut Vec<Speaker>, voice: &[f32], t: f32, end: f32, changed: &mut bool) -> Option<String> {
+        if voice.is_empty() {
+            let id = self.last.as_ref().filter(|(_, at)| t - at < SAME_TURN_S).map(|(id, _)| id.clone());
+            if let Some(id) = &id {
+                self.last = Some((id.clone(), end));
+            }
+            return id;
+        }
+        let best_known = self
+            .known
+            .iter()
+            .map(|k| (similarity(&k.voice, voice), k))
+            .filter(|(s, _)| *s >= SAME_VOICE)
+            .max_by(|a, b| a.0.total_cmp(&b.0));
+        let best_here = speakers
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (similarity(&s.voice, voice), i))
+            .filter(|(s, _)| *s >= SAME_VOICE)
+            .max_by(|a, b| a.0.total_cmp(&b.0));
+        let index = match (best_known, best_here) {
+            // This call's own cluster wins when it's at least as close as the saved voice.
+            (_, Some((here, i))) if best_known.map_or(true, |(k, _)| here >= k) => i,
+            (Some((_, k)), _) => match speakers.iter().position(|s| s.name.eq_ignore_ascii_case(&k.name)) {
+                Some(i) => i,
+                None => {
+                    speakers.push(Speaker { id: format!("s{}", speakers.len() + 1), name: k.name.clone(), voice: voice.to_vec(), phrases: 0 });
+                    *changed = true;
+                    speakers.len() - 1
+                }
+            },
+            _ => {
+                speakers.push(Speaker { id: format!("s{}", speakers.len() + 1), name: String::new(), voice: voice.to_vec(), phrases: 0 });
+                *changed = true;
+                speakers.len() - 1
+            }
+        };
+        let s = &mut speakers[index];
+        let n = s.phrases as f32;
+        s.voice = unit(s.voice.iter().zip(voice).map(|(a, b)| a * n + b).collect());
+        s.phrases += 1;
+        self.last = Some((s.id.clone(), end));
+        Some(s.id.clone())
+    }
+}
 
 /// Collects one source and hands out phrases ending at a pause.
 pub struct Phrases {
@@ -100,17 +180,25 @@ pub struct Meeting {
     stop: Arc<AtomicBool>,
     capture: JoinHandle<Result<(), String>>,
     worker: JoinHandle<()>,
-    note: Arc<Mutex<Note>>,
+    pub note: Arc<Mutex<Note>>,
 }
 
 impl Meeting {
     /// `title`: the calendar event's name when notes were started from a meeting prompt.
-    pub fn start(app: AppHandle, langs: String, mic: Option<String>, title: Option<String>) -> Result<Meeting, String> {
+    /// `attendees`: names from the calendar invite; the meeting window is scanned for more in the background.
+    pub fn start(
+        app: AppHandle,
+        langs: String,
+        mic: Option<String>,
+        title: Option<String>,
+        attendees: Vec<String>,
+    ) -> Result<Meeting, String> {
         let started_at = now_ms();
         let note = Arc::new(Mutex::new(Note {
             id: format!("note-{started_at}"),
             started_at,
             title: title.unwrap_or_default(),
+            attendees,
             ..Default::default()
         }));
         let stop = Arc::new(AtomicBool::new(false));
@@ -127,6 +215,7 @@ impl Meeting {
 
         let worker = {
             let note = note.clone();
+            let mut voices = Voices::new(app.state::<App>().store.known_voices());
             std::thread::spawn(move || {
                 let mut next_id = 0;
                 while let Ok(first) = phrase_rx.recv() {
@@ -137,7 +226,7 @@ impl Meeting {
                         if job.partial && batch[i + 1..].iter().any(|j| j.source == job.source) {
                             continue;
                         }
-                        handle(&app, &note, &langs, job, &mut next_id);
+                        handle(&app, &note, &langs, job, &mut next_id, &mut voices);
                     }
                 }
             })
@@ -174,12 +263,75 @@ impl Meeting {
     }
 }
 
+/// What the windows need to label lines: [{id, name}] plus the attendee names to offer.
+pub fn speakers_json(n: &Note) -> serde_json::Value {
+    serde_json::json!({
+        "id": n.id,
+        "speakers": n.speakers.iter().map(|s| serde_json::json!({ "id": s.id, "name": s.name })).collect::<Vec<_>>(),
+        "attendees": n.attendees,
+    })
+}
+
+/// Name a voice (live or saved note) and remember it for future calls. Renaming to "" un-names it.
+pub fn name_speaker(app: &AppHandle, note_id: &str, speaker: &str, name: &str) -> Result<serde_json::Value, String> {
+    let name = name.trim().chars().take(60).collect::<String>();
+    let state = app.state::<App>();
+    let rename = |n: &mut Note| -> Option<(Vec<f32>, u32)> {
+        let s = n.speakers.iter_mut().find(|s| s.id == speaker)?;
+        s.name = name.clone();
+        if !name.is_empty() && !n.attendees.iter().any(|a| a.eq_ignore_ascii_case(&name)) {
+            n.attendees.push(name.clone());
+        }
+        Some((s.voice.clone(), s.phrases))
+    };
+    let live = state.meeting.lock().unwrap().as_ref().filter(|m| m.id == note_id).map(|m| m.note.clone());
+    let (voice, json) = match live {
+        Some(note) => {
+            let mut n = note.lock().unwrap();
+            let v = rename(&mut n).ok_or("Unknown speaker")?;
+            (v, speakers_json(&n))
+        }
+        None => {
+            let mut n = state.store.note(note_id)?;
+            let v = rename(&mut n).ok_or("Unknown speaker")?;
+            state.store.save_note(&n)?;
+            (v, speakers_json(&n))
+        }
+    };
+    if !name.is_empty() && !voice.0.is_empty() {
+        state.store.remember_voice(&name, &voice.0, voice.1)?;
+    }
+    let _ = app.emit("note-speakers", &json);
+    Ok(json)
+}
+
+/// Add names found after the call started (meeting window scan, or typed by the user).
+pub fn add_attendees(app: &AppHandle, note_id: &str, names: Vec<String>) {
+    let state = app.state::<App>();
+    let live = state.meeting.lock().unwrap().as_ref().filter(|m| m.id == note_id).map(|m| m.note.clone());
+    let Some(note) = live else { return };
+    let mut n = note.lock().unwrap();
+    for name in names {
+        let name = name.trim().chars().take(60).collect::<String>();
+        if !name.is_empty() && !n.attendees.iter().any(|a| a.eq_ignore_ascii_case(&name)) {
+            n.attendees.push(name);
+        }
+    }
+    let _ = app.emit("note-speakers", speakers_json(&n));
+}
+
 /// Summarize + title a saved note, store it, and tell the hub.
 pub fn summarize(app: &AppHandle, id: &str, language: Option<String>) -> Result<Note, String> {
     let state = app.state::<App>();
     let mut note = state.store.note(id)?;
     let language = language.or_else(|| state.settings.lock().unwrap().summary_language.clone());
-    let lines = serde_json::to_value(&note.lines).map_err(|e| e.to_string())?;
+    let name_of = |l: &Line| l.speaker.as_ref().and_then(|id| note.speakers.iter().find(|s| &s.id == id)).map(|s| s.name.clone());
+    let lines: Vec<serde_json::Value> = note
+        .lines
+        .iter()
+        .map(|l| serde_json::json!({ "who": l.who, "text": l.text, "t": l.t, "name": name_of(l).unwrap_or_default() }))
+        .collect();
+    let lines = serde_json::Value::Array(lines);
     let (summary, title) = sidecar::summarize(&lines, language.as_deref())?;
     note.summary = Some(summary);
     if note.title.is_empty() && !title.is_empty() {
@@ -199,7 +351,7 @@ pub struct Job {
     partial: bool,
 }
 
-fn handle(app: &AppHandle, note: &Mutex<Note>, langs: &str, job: &Job, next_id: &mut u64) {
+fn handle(app: &AppHandle, note: &Mutex<Note>, langs: &str, job: &Job, next_id: &mut u64, voices: &mut Voices) {
     let who = if job.source == Source::System { "them" } else { "you" };
     let text = match sidecar::note_chunk(&wav(&job.samples, job.rate), langs, job.partial) {
         Ok(text) => text,
@@ -219,6 +371,12 @@ fn handle(app: &AppHandle, note: &Mutex<Note>, langs: &str, job: &Job, next_id: 
         }
         return;
     }
+    // Who said it (other side only; the mic is always "you"). The voiceprint is computed on the CPU.
+    let voice = if who == "them" && !text.is_empty() {
+        sidecar::voice(&wav(&job.samples, job.rate)).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     let line = {
         let mut n = note.lock().unwrap();
         if text.is_empty() || echo(&n) {
@@ -232,7 +390,16 @@ fn handle(app: &AppHandle, note: &Mutex<Note>, langs: &str, job: &Job, next_id: 
                     let _ = app.emit("note-drop", id);
                 }
             }
-            let line = Line { id: *next_id, who: who.into(), text: text.clone(), t: job.t };
+            let speaker = (who == "them").then(|| {
+                let end = job.t + job.samples.len() as f32 / job.rate as f32;
+                let mut changed = false;
+                let id = voices.assign(&mut n.speakers, &voice, job.t, end, &mut changed);
+                if changed {
+                    let _ = app.emit("note-speakers", speakers_json(&n));
+                }
+                id
+            }).flatten();
+            let line = Line { id: *next_id, who: who.into(), text: text.clone(), t: job.t, speaker };
             *next_id += 1;
             n.lines.push(line.clone());
             n.lines.sort_by(|a, b| a.t.total_cmp(&b.t));
@@ -308,6 +475,23 @@ mod tests {
         assert!((p.start - 4.7).abs() < 1e-3);
         p.feed(&[0.3; 500]);
         assert!(p.next(true).is_some(), "flush sends the tail");
+    }
+
+    #[test]
+    fn voices_are_told_apart_and_names_are_recognised() {
+        let (zaid, ahmed, other) = (unit(vec![1.0, 0.1, 0.0]), unit(vec![0.0, 1.0, 0.1]), unit(vec![0.1, 0.0, 1.0]));
+        let mut v = Voices::new(vec![KnownVoice { name: "Zaid".into(), voice: zaid.clone(), phrases: 3 }]);
+        let (mut speakers, mut changed) = (Vec::new(), false);
+        assert_eq!(v.assign(&mut speakers, &ahmed, 0.0, 2.0, &mut changed).as_deref(), Some("s1"));
+        assert!(changed && speakers[0].name.is_empty(), "a new voice starts unnamed");
+        assert_eq!(v.assign(&mut speakers, &zaid, 3.0, 5.0, &mut changed).as_deref(), Some("s2"));
+        assert_eq!(speakers[1].name, "Zaid", "a saved voice is recognised by name");
+        changed = false;
+        assert_eq!(v.assign(&mut speakers, &unit(vec![0.05, 1.0, 0.12]), 6.0, 8.0, &mut changed).as_deref(), Some("s1"));
+        assert!(!changed, "the same voice again is the same speaker");
+        assert_eq!(v.assign(&mut speakers, &[], 9.0, 9.5, &mut changed).as_deref(), Some("s1"), "short reply: same turn");
+        assert_eq!(v.assign(&mut speakers, &other, 10.0, 12.0, &mut changed).as_deref(), Some("s3"));
+        assert_eq!(v.assign(&mut speakers, &[], 40.0, 40.5, &mut changed), None, "short phrase long after: unknown");
     }
 
     #[test]

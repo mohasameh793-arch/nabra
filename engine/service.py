@@ -6,6 +6,7 @@ POST /instruction?langs=ar,en                WAV body → {"instruction", "actio
 POST /transform {"text", "instruction"}      → {"text"}  (user-requested rewrite / translation)
 POST /note?langs=ar,en[&partial=1]         WAV body → {"text", "language"}      (calls: no LLM, never stored)
 POST /summary   {"lines": [...], "language": "ar"|null}  → {"summary", "title"}
+POST /voice                                 WAV body → {"voice": [256 floats] | []}   (who is speaking)
 
 Transcripts are never written to logs.
 """
@@ -23,19 +24,21 @@ from lexicon import Lexicon
 from polish import Llm, changed_words, check_edit
 from shortcuts import STYLES, Snippets, apply_style, classify, spoken_breaks
 from speech import Transcriber
+from voices import Voices
 
 log = logging.getLogger("nabra.service")
 
 
 class Engine:
     def __init__(self, dictionary: Path | None, snippets: Path | None, llm_url: str | None, keep_clips: Path | None,
-                 whisper: str = "large-v3", cuda_dir: Path | None = None):
+                 whisper: str = "large-v3", cuda_dir: Path | None = None, voice_model: Path | None = None):
         self.lexicon = Lexicon(Path(__file__).with_name("lexicon_builtin.tsv"), dictionary)
         self.snippets = Snippets(snippets)
         self.speech = Transcriber(whisper, cuda_dir)
         self.llm = Llm(llm_url) if llm_url else None
         self.keep_clips = keep_clips
         self.gpu = Lock()  # one decode at a time; dictation and call notes share the GPU
+        self.voices = Voices(voice_model)
 
     def dictate(self, wav: bytes, langs: list[str], mode: str, style: str = "formal") -> dict:
         t0 = time.perf_counter()
@@ -131,6 +134,8 @@ def handler_for(engine: Engine):
                     self.reply(200, {"text": engine.transform(req["text"], req["instruction"])})
                 elif url.path == "/note":
                     self.reply(200, engine.note(body, langs, q.get("partial", ["0"])[0] == "1"))
+                elif url.path == "/voice":
+                    self.reply(200, {"voice": engine.voices.embed(body)})
                 elif url.path == "/summary":
                     req = json.loads(body)
                     self.reply(200, engine.summary(req["lines"], req.get("language")))
