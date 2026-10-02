@@ -47,6 +47,8 @@ pub struct App {
     pub updated_to: Mutex<Option<String>>,
     /// A newer signed release found by the updater, waiting for the user to click Update.
     pub update: Mutex<Option<tauri_plugin_updater::Update>>,
+    /// (version, when) the pill last offered an update, so a dismissed offer comes back a day later.
+    pub offered: Mutex<Option<(String, std::time::Instant)>>,
 }
 
 impl App {
@@ -217,6 +219,7 @@ fn main() {
                 busy: AtomicBool::new(false),
                 updated_to: Mutex::new(updated_to),
                 update: Mutex::new(None),
+                offered: Mutex::new(None),
             });
             updater::watch(app.handle().clone());
             let watcher = app.handle().clone();

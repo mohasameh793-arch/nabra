@@ -18,6 +18,8 @@ use crate::App;
 // version only once.
 const FIRST_CHECK: Duration = Duration::from_secs(20);
 const EVERY: Duration = Duration::from_secs(5 * 60);
+/// A dismissed ("later") update is offered again after this long, and on every start.
+const REMIND_AFTER: Duration = Duration::from_secs(24 * 60 * 60);
 
 #[derive(Clone, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
@@ -31,7 +33,8 @@ fn idle(app: &AppHandle) -> bool {
     !state.busy.load(Ordering::SeqCst) && state.meeting.lock().unwrap().is_none()
 }
 
-/// Asks GitHub for a newer signed release and remembers it. The pill offers each new version once.
+/// Asks GitHub for a newer signed release and remembers it. The pill offers a version once, then again every
+/// 24 hours until it's installed.
 pub async fn check(app: &AppHandle) -> Result<Status, String> {
     let current = app.package_info().version.to_string();
     let found = app
@@ -43,10 +46,12 @@ pub async fn check(app: &AppHandle) -> Result<Status, String> {
     let Some(update) = found else { return Ok(Status::UpToDate { version: current }) };
     let (version, notes) = (update.version.clone(), update.body.clone().unwrap_or_default());
     let state = app.state::<App>();
-    let is_new = state.update.lock().unwrap().as_ref().map_or(true, |u| u.version != version);
     *state.update.lock().unwrap() = Some(update);
     let _ = app.emit("update", json!({ "status": "available", "version": version, "notes": notes }));
-    if is_new {
+    let mut offered = state.offered.lock().unwrap();
+    let due = offered.as_ref().map_or(true, |(v, at)| *v != version || at.elapsed() >= REMIND_AFTER);
+    if due {
+        *offered = Some((version.clone(), std::time::Instant::now()));
         state.tell(Control::UpdateAvailable(version.clone()));
     }
     Ok(Status::Available { version, notes })
