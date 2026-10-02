@@ -2009,7 +2009,7 @@ dependencies = [
 
 [[package]]
 name = "nabra"
-version = "2.1.5"
+version = "2.1.6"
 dependencies = [
  "chrono",
  "cpal",
