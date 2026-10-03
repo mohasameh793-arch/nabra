@@ -268,7 +268,20 @@ header{position:sticky;top:12px;z-index:60;display:flex;justify-content:center;m
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><symbol id="nm" viewBox="0 0 114 110"><rect x="14" y="48" width="17" height="24" rx="8.5" fill="none" stroke="currentColor" stroke-width="11"/><circle cx="16.5" cy="31" r="5.5" fill="currentColor"/><circle cx="29.5" cy="31" r="5.5" fill="currentColor"/><rect x="48" y="48" width="12" height="54" rx="6" fill="currentColor"/><path d="M68 76 V36 A6 6 0 0 1 80 36 V76 Q80 78 78 78 H70 Q68 78 68 76Z" fill="currentColor"/><path d="M74 36 L94 72" stroke="currentColor" stroke-width="12" stroke-linecap="round"/><path d="M88 76 V36 A6 6 0 0 1 100 36 V76 Q100 78 98 78 H90 Q88 78 88 76Z" fill="currentColor"/><circle cx="74" cy="92" r="6.5" fill="#2BB3A3"/><circle cx="94" cy="17" r="6.5" fill="#2BB3A3"/></symbol><symbol id="nl" viewBox="0 0 354 110"><rect x="14" y="48" width="17" height="24" rx="8.5" fill="none" stroke="currentColor" stroke-width="11"/><circle cx="16.5" cy="31" r="5.5" fill="currentColor"/><circle cx="29.5" cy="31" r="5.5" fill="currentColor"/><rect x="48" y="48" width="12" height="54" rx="6" fill="currentColor"/><path d="M68 76 V36 A6 6 0 0 1 80 36 V76 Q80 78 78 78 H70 Q68 78 68 76Z" fill="currentColor"/><path d="M74 36 L94 72" stroke="currentColor" stroke-width="12" stroke-linecap="round"/><path d="M88 76 V36 A6 6 0 0 1 100 36 V76 Q100 78 98 78 H90 Q88 78 88 76Z" fill="currentColor"/><circle cx="74" cy="92" r="6.5" fill="#2BB3A3"/><circle cx="94" cy="17" r="6.5" fill="#2BB3A3"/><svg x="128" y="12" width="222" height="66" viewBox="0 0 262 78"><g fill="none" stroke="currentColor" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"><path d="M6 72 V54 A18 18 0 0 1 42 54 V72"/><circle cx="82" cy="54" r="18"/><path d="M100 36 V72"/><path d="M122 6 V72"/><circle cx="140" cy="54" r="18"/><path d="M180 72 V54 A18 18 0 0 1 198 36"/><circle cx="238" cy="54" r="18"/><path d="M256 36 V72"/></g></svg></symbol></defs></svg>
 
-<div class="banner">Nabra 2.1 is here: a new look and automatic updates.<a href="https://github.com/mohasameh793-arch/nabra/releases/latest">See what’s new ›</a></div>
+<div class="banner"><span id="bannerText">Nabra for Windows: free, open source, and it updates itself.</span><a href="https://github.com/mohasameh793-arch/nabra/releases/latest">See what’s new ›</a></div>
+<script>
+// The banner always shows the newest release: version + the first line of its notes, read from GitHub on load.
+fetch("https://api.github.com/repos/mohasameh793-arch/nabra/releases/latest")
+  .then((r) => (r.ok ? r.json() : Promise.reject()))
+  .then((rel) => {
+    const v = (rel.tag_name || "").replace(/^v/, "");
+    let what = (rel.body || "").split("\n").map((l) => l.trim()).find((l) => l && !l.startsWith("**")) || "";
+    what = what.replace(/[*_`#]/g, "");
+    if (what.length > 110) what = what.slice(0, 107).replace(/\s+\S*$/, "") + "…";
+    if (v) document.getElementById("bannerText").textContent = `Nabra ${v} is out${what ? ": " + what : "."}`;
+  })
+  .catch(() => {}); // offline or rate-limited: keep the generic line
+</script>
 
 <header><nav class="nav" aria-label="Main">
   <a class="brand" href="#top" aria-label="Nabra home"><svg class="lockup" viewBox="0 0 354 110" aria-hidden="true"><use href="#nl"/></svg></a>
