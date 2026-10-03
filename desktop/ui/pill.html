@@ -34,6 +34,17 @@
     <span class="spin" aria-hidden="true"></span>
   </div>
 
+  <!-- An answer card: what was playing, a catch-up, or an answer from past calls -->
+  <div class="reveal" id="reveal" role="status" aria-live="polite">
+    <b id="reveal-title" dir="auto"></b>
+    <div class="reveal-text" id="reveal-text" dir="auto"></div>
+    <div class="reveal-actions">
+      <button id="reveal-open" hidden>Open in notes</button>
+      <button id="reveal-copy">Copy</button>
+      <button class="x" id="reveal-close" aria-label="Close">✕</button>
+    </div>
+  </div>
+
   <!-- Everything else: a horizontal pill -->
   <div class="bar" id="bar" role="status" aria-live="polite">
     <button class="stop" id="stop" aria-label="Stop" hidden><span></span></button>

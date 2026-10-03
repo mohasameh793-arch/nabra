@@ -27,6 +27,7 @@
         <span class="rec-dot live" id="mw-dot"></span>
         <span class="mw-clock" id="mw-clock">0:00</span>
         <span class="mw-state" id="mw-state">Recording</span>
+        <button class="btn" id="mw-catchup" title="The last 5 minutes in 3 bullets (Ctrl+Alt+U)">Catch me up</button>
         <button class="btn danger" id="mw-stop">Stop</button>
       </div>
       <div class="mw-meters" id="mw-meters" aria-label="Sound levels">
@@ -46,6 +47,10 @@
       <div class="mw-saved muted" id="mw-saved"></div>
     </section>
     <section class="mw-panel" id="tab-transcript" hidden>
+      <div class="mw-caught" id="mw-caught" hidden>
+        <div class="row"><b>While you were away</b><button class="link" id="mw-caught-close" aria-label="Close">✕</button></div>
+        <div id="mw-caught-text" dir="auto"></div>
+      </div>
       <ol class="transcript" id="mw-transcript" aria-live="polite"></ol>
       <p class="empty" id="mw-transcript-empty">Words appear as people speak.</p>
     </section>

@@ -88,6 +88,10 @@ pub fn show_meeting_window(app: &AppHandle) {
 
 /// Start or stop call notes (pill button, Ctrl+Alt+N, or the hub).
 pub fn toggle_meeting(app: &AppHandle) -> Result<(), String> {
+    // Starting takes a moment (it opens two audio devices): without this, two quick toggles from the hotkey and
+    // the window could both start a meeting, leaving one recording forever.
+    static TOGGLING: Mutex<()> = Mutex::new(());
+    let _one_at_a_time = TOGGLING.lock().unwrap_or_else(|e| e.into_inner());
     let state = app.state::<App>();
     let running = state.meeting.lock().unwrap().take();
     if let Some(m) = running {
@@ -126,8 +130,18 @@ pub fn toggle_meeting(app: &AppHandle) -> Result<(), String> {
         let attendees = event.map(|e| e.attendees).unwrap_or_default();
         let m = Meeting::start(app.clone(), langs, mic, title.clone(), attendees)?;
         let (id, scan_app) = (m.id.clone(), app.clone());
-        // …and whoever the meeting app shows on screen (Zoom / Teams / Meet), found in the background.
-        std::thread::spawn(move || meeting::add_attendees(&scan_app, &id, attendees::scan()));
+        // …and whoever the meeting app's participant list shows (Zoom / Teams / Meet). The window asks the user to
+        // open that list; we keep looking for 10 minutes so names appear as soon as it's open, and newcomers too.
+        std::thread::spawn(move || {
+            for _ in 0..40 {
+                let still_running = scan_app.state::<App>().meeting.lock().unwrap().as_ref().is_some_and(|m| m.id == id);
+                if !still_running {
+                    break;
+                }
+                meeting::add_attendees(&scan_app, &id, attendees::scan());
+                std::thread::sleep(Duration::from_secs(15));
+            }
+        });
         let _ = app.emit("meeting", json!({ "active": true, "id": m.id, "elapsed": 0, "title": title }));
         *state.meeting.lock().unwrap() = Some(m);
         show_meeting_window(app);
@@ -163,7 +177,8 @@ fn watch_calendar(app: AppHandle) {
         }
         tick += 1;
         let state = app.state::<App>();
-        let wanted = state.settings.lock().unwrap().meeting_prompts && state.meeting.lock().unwrap().is_none();
+        let prompts = state.settings.lock().unwrap().meeting_prompts; // never hold two locks at once
+        let wanted = prompts && state.meeting.lock().unwrap().is_none();
         if wanted {
             let now = store::now_ms() as i64;
             let starting = state.calendar.lock().unwrap().iter()
@@ -244,6 +259,12 @@ fn main() {
             pill::init(app.handle());
 
             let (keys_tx, keys) = channel();
+            let (talk_key, keep) = {
+                let s = app.state::<App>().settings.lock().unwrap().clone();
+                (s.talk_key, s.history_keep)
+            };
+            keyboard::set_talk_key(&talk_key);
+            let _ = app.state::<App>().store.prune_history(&keep);
             keyboard::listen(keys_tx);
             let to_controller = tx.clone();
             std::thread::spawn(move || {
@@ -257,7 +278,7 @@ fn main() {
             let quit = MenuItem::with_id(app, "quit", "Quit Nabra", true, None::<&str>)?;
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().cloned().expect("bundle icon"))
-                .tooltip(format!("Nabra · hold {} to dictate", keyboard::TALK_KEY_LABEL))
+                .tooltip(format!("Nabra · hold {} to dictate", keyboard::talk_key_label()))
                 .menu(&Menu::with_items(app, &[&open, &copy, &quit])?)
                 .on_menu_event(|app, e| match e.id.as_ref() {
                     "open" => open_hub(app, None),

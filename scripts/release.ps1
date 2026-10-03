@@ -23,14 +23,14 @@ if ((git rev-parse --abbrev-ref HEAD) -ne "main") { throw "Release from the main
 gh release view "v$Version" --repo $Repo *> $null
 if ($LASTEXITCODE -eq 0) { throw "v$Version is already released." }
 
-# 1. Version everywhere.
-$cargo = Get-Content desktop\Cargo.toml -Raw
+# 1. Version everywhere. Read as UTF-8: Windows PowerShell 5.1 otherwise reads ANSI and garbles "·" on every release.
+$cargo = Get-Content desktop\Cargo.toml -Raw -Encoding UTF8
 $cargo = [regex]::Replace($cargo, '(?m)^version = "\d+\.\d+\.\d+"', "version = `"$Version`"", 1)
 [IO.File]::WriteAllText("$root\desktop\Cargo.toml", $cargo)  # no BOM: Cargo, Tauri and JSON readers reject it
-$conf = Get-Content desktop\tauri.conf.json -Raw
+$conf = Get-Content desktop\tauri.conf.json -Raw -Encoding UTF8
 $conf = [regex]::Replace($conf, '"version": "\d+\.\d+\.\d+"', "`"version`": `"$Version`"", 1)
 [IO.File]::WriteAllText("$root\desktop\tauri.conf.json", $conf)
-$mcp = Get-Content engine\mcp_notes.py -Raw
+$mcp = Get-Content engine\mcp_notes.py -Raw -Encoding UTF8
 $mcp = [regex]::Replace($mcp, '("name": "nabra-notes", "version": ")\d+\.\d+\.\d+', "`${1}$Version")
 [IO.File]::WriteAllText("$root\engine\mcp_notes.py", $mcp)
 

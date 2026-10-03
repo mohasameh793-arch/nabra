@@ -171,7 +171,8 @@ fn words(s: &str) -> HashSet<String> {
 pub fn is_echo(a: &str, b: &str) -> bool {
     let (a, b) = (words(a), words(b));
     let union = a.union(&b).count();
-    union > 0 && a.intersection(&b).count() as f32 / union as f32 >= 0.6
+    // Short replies ("Okay", "Thank you") are said by both sides all the time: never call those an echo.
+    union >= 4 && a.intersection(&b).count() as f32 / union as f32 >= 0.6
 }
 
 pub struct Meeting {
@@ -252,7 +253,7 @@ impl Meeting {
     /// Stops recording, finishes the queued phrases, saves. The summary is written only when the user asks.
     pub fn finish(self, app: &AppHandle) -> Result<Note, String> {
         self.stop.store(true, Ordering::SeqCst);
-        let recorded = self.capture.join().map_err(|_| "Recording thread crashed".to_string())?;
+        let recorded = self.capture.join().unwrap_or_else(|_| Err("Recording thread crashed".to_string()));
         let _ = self.worker.join(); // ends once the capture thread drops its sender
         let mut note = self.note.lock().unwrap().clone();
         note.seconds = self.started.elapsed().as_secs_f32();
@@ -261,6 +262,109 @@ impl Meeting {
         recorded?;
         Ok(note)
     }
+}
+
+fn note_id(note: &Mutex<Note>) -> String {
+    note.lock().unwrap().id.clone()
+}
+
+/// "Catch me up": the live call's last 5 minutes as 3 bullets.
+pub fn catch_up(app: &AppHandle) -> Result<String, String> {
+    const WINDOW_S: f32 = 5.0 * 60.0;
+    let lines: Vec<serde_json::Value> = {
+        let state = app.state::<App>();
+        let meeting = state.meeting.lock().unwrap();
+        let m = meeting.as_ref().ok_or("Call notes aren't running")?;
+        let now = m.started.elapsed().as_secs_f32();
+        let n = m.note.lock().unwrap();
+        n.lines
+            .iter()
+            .filter(|l| l.t >= now - WINDOW_S)
+            .map(|l| serde_json::json!({ "who": l.who, "text": l.text, "name": speaker_name(&n, l) }))
+            .collect()
+    };
+    if lines.is_empty() {
+        return Ok("Nothing was said in the last few minutes.".into());
+    }
+    let me = app.state::<App>().settings.lock().unwrap().name.clone();
+    let text = sidecar::catch_up(&serde_json::Value::Array(lines), &me)?;
+    Ok(if text.is_empty() { "Nothing important came up.".into() } else { text })
+}
+
+fn speaker_name(n: &Note, l: &Line) -> String {
+    l.speaker.as_ref().and_then(|id| n.speakers.iter().find(|s| &s.id == id)).map(|s| s.name.clone()).unwrap_or_default()
+}
+
+/// Lowercase, no Arabic diacritics/tatweel, one form of alef/ya/ta marbuta: so "الإطلاق" finds "الاطلاق".
+fn fold(text: &str) -> String {
+    text.chars()
+        .filter(|c| !('\u{064B}'..='\u{0652}').contains(c) && *c != '\u{0640}')
+        .map(|c| match c {
+            'أ' | 'إ' | 'آ' => 'ا',
+            'ى' => 'ي',
+            'ة' => 'ه',
+            _ => c,
+        })
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// Search words in a question: no stop words, no short words; Arabic "ال" dropped so both forms match.
+fn search_words(question: &str) -> Vec<String> {
+    const STOP: &[&str] = &[
+        "what", "who", "when", "why", "how", "did", "does", "the", "about", "say", "said", "meeting", "meetings", "call",
+        "calls", "was", "were", "and", "for", "with", "that", "this", "ask", "my", "notes", "last", "week", "today",
+        "ايه", "اللي", "ماذا", "عن", "في", "على", "قال", "قالت", "ميتنج", "الميتنج", "اجتماع", "الاجتماع", "مين", "امتى",
+    ];
+    fold(question)
+        .split(|c: char| !c.is_alphanumeric())
+        .map(|w| w.strip_prefix("ال").filter(|r| r.chars().count() >= 3).unwrap_or(w).to_string())
+        .filter(|w| w.chars().count() >= 3 && !STOP.contains(&w.as_str()))
+        .collect()
+}
+
+/// "Ask my meetings": find the most relevant lines across saved notes, let the local AI answer from them, and
+/// return (answer, note to open, time in that note).
+pub fn ask(app: &AppHandle, question: &str) -> Result<(String, Option<String>, f32), String> {
+    const SNIPPETS: usize = 12;
+    let words = search_words(question);
+    if words.is_empty() {
+        return Err("Ask about something specific, for example: what did Zaid say about the launch?".into());
+    }
+    let notes = app.state::<App>().store.notes();
+    let mut hits: Vec<(usize, &Note, &Line)> = Vec::new();
+    for n in &notes {
+        for l in &n.lines {
+            let haystack = fold(&format!("{} {} {}", l.text, speaker_name(n, l), n.title));
+            let score = words.iter().filter(|w| haystack.contains(w.as_str())).count();
+            if score > 0 {
+                hits.push((score, n, l));
+            }
+        }
+    }
+    if hits.is_empty() {
+        return Ok(("I couldn't find that in your call notes.".into(), None, 0.0));
+    }
+    // Best matches first; among equals, the most recent call first.
+    hits.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.started_at.cmp(&a.1.started_at)));
+    hits.truncate(SNIPPETS);
+    let date = |ms: u64| chrono::DateTime::from_timestamp_millis(ms as i64).map(|d| d.format("%Y-%m-%d").to_string()).unwrap_or_default();
+    let snippets: Vec<serde_json::Value> = hits
+        .iter()
+        .enumerate()
+        .map(|(i, (_, n, l))| {
+            let who = if l.who == "you" { "Me".to_string() } else { Some(speaker_name(n, l)).filter(|s| !s.is_empty()).unwrap_or("Them".into()) };
+            serde_json::json!({ "n": i + 1, "date": date(n.started_at), "title": n.title, "who": who, "text": l.text })
+        })
+        .collect();
+    let answer = sidecar::ask(question, &serde_json::Value::Array(snippets))?;
+    // Of the lines the answer cites, open the best-matching one (snippets are numbered best first).
+    let cited = answer.split('[').skip(1).filter_map(|r| r.split(']').next()?.trim().parse::<usize>().ok()).filter(|n| *n >= 1).min();
+    let (note, t) = cited
+        .and_then(|n| hits.get(n.wrapping_sub(1)))
+        .map(|(_, n, l)| (Some(n.id.clone()), l.t))
+        .unwrap_or((None, 0.0));
+    Ok((answer, note, t))
 }
 
 /// What the windows need to label lines: [{id, name}] plus the attendee names to offer.
@@ -311,13 +415,16 @@ pub fn add_attendees(app: &AppHandle, note_id: &str, names: Vec<String>) {
     let live = state.meeting.lock().unwrap().as_ref().filter(|m| m.id == note_id).map(|m| m.note.clone());
     let Some(note) = live else { return };
     let mut n = note.lock().unwrap();
+    let before = n.attendees.len();
     for name in names {
         let name = name.trim().chars().take(60).collect::<String>();
         if !name.is_empty() && !n.attendees.iter().any(|a| a.eq_ignore_ascii_case(&name)) {
             n.attendees.push(name);
         }
     }
-    let _ = app.emit("note-speakers", speakers_json(&n));
+    if n.attendees.len() != before {
+        let _ = app.emit("note-speakers", speakers_json(&n));
+    }
 }
 
 /// Summarize + title a saved note, store it, and tell the hub.
@@ -367,7 +474,7 @@ fn handle(app: &AppHandle, note: &Mutex<Note>, langs: &str, job: &Job, next_id: 
     if job.partial {
         // Live text for the phrase in progress; the hub/meeting window replace it when the line is final.
         if !text.is_empty() && !echo(&note.lock().unwrap()) {
-            let _ = app.emit("note-partial", serde_json::json!({ "who": who, "t": job.t, "text": text }));
+            let _ = app.emit("note-partial", serde_json::json!({ "note": note_id(note), "who": who, "t": job.t, "text": text }));
         }
         return;
     }
@@ -387,7 +494,7 @@ fn handle(app: &AppHandle, note: &Mutex<Note>, langs: &str, job: &Job, next_id: 
                     n.lines.iter().filter(near).filter(|l| l.who == "you" && is_echo(&l.text, &text)).map(|l| l.id).collect();
                 n.lines.retain(|l| !echoes.contains(&l.id));
                 for id in echoes {
-                    let _ = app.emit("note-drop", id);
+                    let _ = app.emit("note-drop", serde_json::json!({ "note": n.id, "id": id }));
                 }
             }
             let speaker = (who == "them").then(|| {
@@ -407,9 +514,11 @@ fn handle(app: &AppHandle, note: &Mutex<Note>, langs: &str, job: &Job, next_id: 
         }
     };
     if let Some(line) = line {
-        let _ = app.emit("note-line", line);
+        let mut payload = serde_json::to_value(&line).unwrap_or_default();
+        payload["note"] = note_id(note).into();
+        let _ = app.emit("note-line", payload);
     }
-    let _ = app.emit("note-partial", serde_json::json!({ "who": who, "t": job.t, "text": "" })); // phrase done
+    let _ = app.emit("note-partial", serde_json::json!({ "note": note_id(note), "who": who, "t": job.t, "text": "" })); // phrase done
 }
 
 fn record(
@@ -492,6 +601,14 @@ mod tests {
         assert_eq!(v.assign(&mut speakers, &[], 9.0, 9.5, &mut changed).as_deref(), Some("s1"), "short reply: same turn");
         assert_eq!(v.assign(&mut speakers, &other, 10.0, 12.0, &mut changed).as_deref(), Some("s3"));
         assert_eq!(v.assign(&mut speakers, &[], 40.0, 40.5, &mut changed), None, "short phrase long after: unknown");
+    }
+
+    #[test]
+    fn short_replies_are_not_echoes_and_search_ignores_spelling_variants() {
+        assert!(!is_echo("Okay.", "okay"), "both sides say okay");
+        assert!(is_echo("the launch moves to Monday next week", "the launch moves to Monday"));
+        assert_eq!(search_words("What did Zaid say about the launch?"), ["zaid", "launch"]);
+        assert!(fold("الإطلاق").contains(&search_words("ايه اللي اتقال عن الاطلاق")[1]));
     }
 
     #[test]

@@ -31,6 +31,26 @@ function drawHead() {
   if (note.live) ticker = setInterval(tick, 500);
 }
 
+// Catch me up: the last 5 minutes in 3 bullets, shown above the transcript.
+$("#mw-catchup").addEventListener("click", async () => {
+  const btn = $("#mw-catchup");
+  btn.disabled = true;
+  btn.textContent = "Catching up…";
+  try {
+    const text = await call("catch_up");
+    $("#mw-caught").hidden = false;
+    $("#mw-caught-text").textContent = text;
+    showTab("transcript");
+    $("#tab-transcript").scrollTop = 0;
+  } catch (err) {
+    toast(String(err));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Catch me up";
+  }
+});
+$("#mw-caught-close").addEventListener("click", () => ($("#mw-caught").hidden = true));
+
 $("#mw-stop").addEventListener("click", async () => {
   $("#mw-stop").disabled = true;
   try {
@@ -152,15 +172,17 @@ function stickToBottom(draw) {
   draw();
   if (atBottom) box.scrollTop = box.scrollHeight;
 }
+// Events carry their note id: a meeting still finishing in the background never leaks into the next one.
+const mine = (p) => note.live && p.note === note.id;
 listen("note-partial", (e) => {
-  if (!note.live) return;
+  if (!mine(e.payload)) return;
   const p = e.payload;
   if (p.text) partials[p.who] = { ...p, id: `live-${p.who}`, partial: true };
   else delete partials[p.who];
   stickToBottom(drawTranscript);
 });
 listen("note-line", (e) => {
-  if (!note.live) return;
+  if (!mine(e.payload)) return;
   delete partials[e.payload.who];
   note.lines.push(e.payload);
   note.lines.sort((a, b) => a.t - b.t);
@@ -176,7 +198,8 @@ listen("note-speakers", (e) => {
   drawTranscript();
 });
 listen("note-drop", (e) => {
-  note.lines = note.lines.filter((l) => l.id !== e.payload);
+  if (!mine(e.payload)) return;
+  note.lines = note.lines.filter((l) => l.id !== e.payload.id);
   drawTranscript();
 });
 listen("note-saved", async (e) => {

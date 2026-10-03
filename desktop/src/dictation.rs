@@ -2,9 +2,11 @@
 //! types or edits text, records history, and decides what the pill shows.
 //!
 //!   Right Ctrl (hold) / pill mic (toggle)  → dictate: text is typed where the cursor is
-//!   Right Alt (hold)                       → command: "scratch that", "new line", or a transform
+//!   Right Alt (hold)                       → command: "scratch that", "new line", a transform
 //!                                            ("make it shorter") applied to the selection or the
-//!                                            last dictation
+//!                                            last dictation, or a question about past calls
+//!   Ctrl+Alt+T (toggle)                    → transcribe what the PC is playing (shown, not typed or kept)
+//!   Ctrl+Alt+U                             → during call notes: catch me up on the last 5 minutes
 
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
@@ -12,7 +14,7 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 use windows::Win32::UI::Input::KeyboardAndMouse::{VIRTUAL_KEY, VK_BACK, VK_LEFT};
 
-use crate::keyboard::{self, Shortcut, COMMAND_KEY_LABEL, NOTES_KEY_LABEL, TALK_KEY_LABEL};
+use crate::keyboard::{self, talk_key_label, Shortcut, COMMAND_KEY_LABEL, NOTES_KEY_LABEL};
 use crate::pill::{self, View};
 use crate::sound::{lift_quiet, wav, Source, Tap};
 use crate::store::{now_ms, Dictation};
@@ -38,6 +40,8 @@ pub enum Control {
     SetupDone,
     /// Something outside changed (e.g. notes started from the hub): re-render the pill.
     Refresh,
+    /// A finished background answer (catch-up, ask my meetings) to show on the pill.
+    Reveal { title: String, text: String, note: Option<String>, t: f32 },
 }
 
 const TOO_SHORT_S: f32 = 0.3;
@@ -46,6 +50,10 @@ const PROBLEM_FOR: Duration = Duration::from_secs(5);
 const MEETING_PROMPT_FOR: Duration = Duration::from_secs(90);
 const UPDATE_PROMPT_FOR: Duration = Duration::from_secs(120);
 const UPDATING_FOR: Duration = Duration::from_secs(600);
+const REVEAL_FOR: Duration = Duration::from_secs(60);
+/// A forgotten hands-free dictation stops itself (and is transcribed) after this long.
+const MAX_TAKE: Duration = Duration::from_secs(5 * 60);
+const MAX_LISTEN: Duration = Duration::from_secs(10 * 60);
 
 struct Take {
     tap: Tap,
@@ -55,6 +63,8 @@ struct Take {
     app_kind: &'static str,
     hands_free: bool,
     command: bool,
+    /// Recording what the PC plays (Ctrl+Alt+T), not the microphone.
+    listen: bool,
 }
 
 /// What Nabra typed last, so "scratch that" / "make it shorter" can find it again.
@@ -71,11 +81,15 @@ pub struct Controller {
     ready: bool,
     shown: Option<View>,
     hold_until: Option<Instant>, // a result/problem/prompt stays visible until then
+    /// Why the engine isn't ready (shown instead of "still starting" forever).
+    engine_error: Option<String>,
+    /// Prompts that arrived mid-dictation, shown once it ends (never silently dropped).
+    deferred: Vec<Control>,
 }
 
 impl Controller {
     pub fn new(app: AppHandle) -> Self {
-        Self { app, take: None, last: None, hovering: false, ready: false, shown: None, hold_until: None }
+        Self { app, take: None, last: None, hovering: false, ready: false, shown: None, hold_until: None, engine_error: None, deferred: Vec::new() }
     }
 
     fn state(&self) -> tauri::State<'_, App> {
@@ -113,7 +127,7 @@ impl Controller {
         self.hold_until = None;
         let notes = self.state().meeting.lock().unwrap().as_ref().map(|m| m.started.elapsed().as_secs());
         let view = if self.hovering {
-            View::Hover { notes_on: notes.is_some(), talk_key: TALK_KEY_LABEL, notes_key: NOTES_KEY_LABEL }
+            View::Hover { notes_on: notes.is_some(), talk_key: talk_key_label(), notes_key: NOTES_KEY_LABEL }
         } else if let Some(seconds) = notes {
             View::Notes { seconds }
         } else {
@@ -123,11 +137,17 @@ impl Controller {
     }
 
     fn begin(&mut self, hands_free: bool, command: bool) {
+        self.begin_take(hands_free, command, false);
+    }
+
+    fn begin_take(&mut self, hands_free: bool, command: bool, listen: bool) {
         if !self.ready {
-            return self.problem("Still starting the speech engine…");
+            let why = self.engine_error.clone().unwrap_or_else(|| "Still starting the speech engine…".into());
+            return self.problem(why);
         }
         let mic = self.state().settings.lock().unwrap().microphone.clone();
-        match Tap::open(Source::Mic, mic.as_deref()) {
+        let opened = if listen { Tap::open(Source::System, None) } else { Tap::open(Source::Mic, mic.as_deref()) };
+        match opened {
             Ok(tap) => {
                 let app_name = keyboard::focused_app();
                 let app_kind = keyboard::app_kind(&app_name, &keyboard::focused_title());
@@ -137,11 +157,12 @@ impl Controller {
                     window: keyboard::focused_window(),
                     app_name,
                     app_kind,
-                    hands_free,
+                    hands_free: hands_free || listen,
                     command,
+                    listen,
                 });
                 self.hold_until = None;
-                self.render(View::Listening { seconds: 0.0, level: 0.0, hands_free, command });
+                self.render(View::Listening { seconds: 0.0, level: 0.0, hands_free: hands_free || listen, command });
             }
             Err(e) => self.problem(e),
         }
@@ -166,6 +187,9 @@ impl Controller {
         if take.command {
             return self.command(take, &audio);
         }
+        if take.listen {
+            return self.heard(&audio);
+        }
         self.render(View::Busy);
         let (langs, mode, style) = {
             let state = self.state();
@@ -175,17 +199,20 @@ impl Controller {
         let result = match sidecar::dictate(&audio, &langs, &mode, &style) {
             Ok(r) if r.text.trim().is_empty() => return self.problem("Didn't catch that. Try again."),
             Ok(r) => r,
-            Err(e) => return self.problem(e),
+            Err(e) => return self.engine_failed(e),
         };
 
         // Type into the app the user started in; if they switched away, use the clipboard instead.
         // Typed where the cursor is: nothing more to show (like Flow). Only a clipboard fallback is worth a note.
+        // Only claim "it's on your clipboard" if it really is (a clipboard manager may be holding it).
+        let clipboard = |why: String| match keyboard::copy(&result.text) {
+            Ok(()) => format!("{why}, so it's on your clipboard"),
+            Err(_) => format!("{why}. It's saved in your history in the Nabra window"),
+        };
         let fallback = if keyboard::focused_window() != take.window {
-            let _ = keyboard::copy(&result.text);
-            Some("You switched windows, so it's on your clipboard".to_string())
+            Some(clipboard("You switched windows".into()))
         } else if let Err(e) = keyboard::type_text(&result.text) {
-            let _ = keyboard::copy(&result.text);
-            Some(format!("{e}, so it's on your clipboard"))
+            Some(clipboard(e))
         } else {
             self.last = Some(Inserted { window: take.window, text: result.text.clone() });
             None
@@ -203,8 +230,11 @@ impl Controller {
         };
         let state = self.state();
         *state.last_text.lock().unwrap() = result.text.clone();
-        if let Err(e) = state.store.add_dictation(&entry) {
-            eprintln!("history: {e}");
+        let keep = state.settings.lock().unwrap().history_keep.clone();
+        if keep != "off" {
+            if let Err(e) = state.store.add_dictation(&entry) {
+                eprintln!("history: {e}");
+            }
         }
         let _ = self.app.emit("dictation", &entry);
         match fallback {
@@ -216,14 +246,99 @@ impl Controller {
         }
     }
 
+    /// Ctrl+Alt+T: what the PC was playing (a voice note, a video), transcribed in the speaker's own dialect.
+    /// It's someone else's speech, so it's only shown (Copy if wanted): never typed, never kept in history.
+    fn heard(&mut self, audio: &[u8]) {
+        self.render(View::Busy);
+        let langs = self.state().settings.lock().unwrap().langs();
+        match sidecar::note_chunk(audio, &langs, false) {
+            Ok(text) if text.trim().is_empty() => self.problem("Didn't hear any speech playing."),
+            Ok(text) => self.flash(View::Reveal { title: "What was playing".into(), text, note: None, t: 0.0 }, REVEAL_FOR),
+            Err(e) => self.engine_failed(e),
+        }
+    }
+
+    /// The engine stopped answering (it crashed, or a GPU error took it down): start it again once.
+    fn engine_failed(&mut self, error: String) {
+        if !error.contains("isn't running") {
+            return self.problem(error);
+        }
+        self.render(View::Working { label: "Restarting the speech engine…".into() });
+        match self.start_engine() {
+            Ok(_) => self.problem("The speech engine restarted. Please try again."),
+            Err(e) => self.problem(e),
+        }
+    }
+
+    /// Starts (or restarts) the engine and waits until it answers.
+    fn start_engine(&mut self) -> Result<sidecar::Health, String> {
+        self.ready = false;
+        let launched = {
+            let state = self.state();
+            let keep_clips = state.settings.lock().unwrap().keep_clips;
+            sidecar::start(
+                &self.app,
+                sidecar::Launch {
+                    dictionary: &state.store.dictionary_path(),
+                    snippets: &state.store.snippets_path(),
+                    clips: &state.store.dir.join("clips"),
+                    keep_clips,
+                },
+            )
+        };
+        let result = launched.and_then(|_| sidecar::wait_ready(Duration::from_secs(240)));
+        match &result {
+            Ok(health) => {
+                *self.state().engine.lock().unwrap() = Some(health.clone());
+                let _ = self.app.emit("engine", health);
+                self.ready = true;
+                self.engine_error = None;
+            }
+            Err(e) => self.engine_error = Some(e.clone()),
+        }
+        result
+    }
+
+    /// Ctrl+Alt+U during call notes: the last few minutes in 3 bullets (worked out in the background).
+    fn catch_up(&mut self) {
+        if self.state().meeting.lock().unwrap().is_none() {
+            return self.problem("Catch me up works during call notes (Ctrl+Alt+N).");
+        }
+        self.flash(View::Working { label: "Catching you up…".into() }, UPDATING_FOR);
+        let app = self.app.clone();
+        std::thread::spawn(move || {
+            let reveal = match crate::meeting::catch_up(&app) {
+                Ok(text) => Control::Reveal { title: "While you were away".into(), text, note: None, t: 0.0 },
+                Err(e) => Control::Reveal { title: "Couldn't catch you up".into(), text: e, note: None, t: 0.0 },
+            };
+            app.state::<App>().tell(reveal);
+        });
+    }
+
+    /// Right Alt + a question about past calls: search the notes, answer from them, point to the moment.
+    fn ask(&mut self, question: String) {
+        self.flash(View::Working { label: "Searching your meetings…".into() }, UPDATING_FOR);
+        let app = self.app.clone();
+        std::thread::spawn(move || {
+            let reveal = match crate::meeting::ask(&app, &question) {
+                Ok((text, note, t)) => Control::Reveal { title: question, text, note, t },
+                Err(e) => Control::Reveal { title: question, text: e, note: None, t: 0.0 },
+            };
+            app.state::<App>().tell(reveal);
+        });
+    }
+
     /// Right Alt: a fixed edit ("scratch that", "new line") or a transform of the selection / last dictation.
     fn command(&mut self, take: Take, audio: &[u8]) {
         self.render(View::Working { label: "Listening to your command…".into() });
         let langs = self.state().settings.lock().unwrap().langs();
         let (instruction, action) = match sidecar::instruction(audio, &langs) {
             Ok(r) => r,
-            Err(e) => return self.problem(e),
+            Err(e) => return self.engine_failed(e),
         };
+        if action == "ask" {
+            return self.ask(instruction); // a question: no text to edit, any window is fine
+        }
         if keyboard::focused_window() != take.window {
             return self.problem("You switched windows, so the command was skipped");
         }
@@ -294,7 +409,7 @@ impl Controller {
     }
 
     pub fn run(mut self, inbox: Receiver<Control>) {
-        if !crate::assets::ready() {
+        if !crate::assets::speech_ready() {
             // First run: the models aren't downloaded yet. The hub's Setup page does that, then tells us.
             self.render(View::Working { label: "Finish setting up Nabra in its window".into() });
             crate::open_hub(&self.app, Some("setup"));
@@ -307,29 +422,13 @@ impl Controller {
             }
         }
         self.render(View::Working { label: "Starting Nabra…".into() });
-        let launched = {
-            let state = self.state();
-            let keep_clips = state.settings.lock().unwrap().keep_clips;
-            sidecar::start(
-                &self.app,
-                sidecar::Launch {
-                    dictionary: &state.store.dictionary_path(),
-                    snippets: &state.store.snippets_path(),
-                    clips: &state.store.dir.join("clips"),
-                    keep_clips,
-                },
-            )
-        };
-        match launched.and_then(|_| sidecar::wait_ready(Duration::from_secs(240))) {
+        match self.start_engine() {
             Ok(health) => {
-                *self.state().engine.lock().unwrap() = Some(health.clone());
-                let _ = self.app.emit("engine", &health);
-                self.ready = true;
                 let gpu = if health.device == "cuda" { "GPU" } else { "CPU" };
                 let updated = self.state().updated_to.lock().unwrap().take();
                 match updated {
                     Some(v) => self.done(format!("Nabra updated to {v}"), "Ready"),
-                    None => self.done(format!("Ready. Hold {TALK_KEY_LABEL} to dictate."), gpu),
+                    None => self.done(format!("Ready. Hold {} to dictate.", talk_key_label()), gpu),
                 }
             }
             Err(e) => self.problem(e),
@@ -338,7 +437,27 @@ impl Controller {
         loop {
             // Updates wait while a dictation or voice command is in progress.
             self.state().busy.store(self.take.is_some(), std::sync::atomic::Ordering::SeqCst);
-            match inbox.recv_timeout(Duration::from_millis(50)) {
+            // A prompt that arrived mid-dictation is shown now (it was never dropped).
+            let next = if self.take.is_none() && !self.deferred.is_empty() {
+                Ok(self.deferred.remove(0))
+            } else {
+                inbox.recv_timeout(Duration::from_millis(50))
+            };
+            match next {
+                Ok(c @ (Control::MeetingStarting(_) | Control::UpdateAvailable(_) | Control::Reveal { .. })) if self.take.is_some() => {
+                    self.deferred.push(c)
+                }
+                Ok(Control::Key(Shortcut::TalkCancelled)) if self.take.as_ref().is_some_and(|t| !t.hands_free && !t.command) => {
+                    self.take = None; // Right Ctrl + C etc.: a shortcut, not a dictation
+                    self.rest();
+                }
+                Ok(Control::Key(Shortcut::ListenToggle)) => match &self.take {
+                    Some(t) if t.listen => self.finish(),
+                    Some(_) => {}
+                    None => self.begin_take(true, false, true),
+                },
+                Ok(Control::Key(Shortcut::CatchUp)) if self.take.is_none() => self.catch_up(),
+                Ok(Control::Reveal { title, text, note, t }) => self.flash(View::Reveal { title, text, note, t }, REVEAL_FOR),
                 Ok(Control::Key(Shortcut::TalkPressed)) if self.take.is_none() => self.begin(false, false),
                 Ok(Control::Key(Shortcut::TalkReleased)) if self.take.as_ref().is_some_and(|t| !t.hands_free && !t.command) => {
                     self.finish()
@@ -385,6 +504,7 @@ impl Controller {
                 }
                 Ok(_) => {}
                 Err(RecvTimeoutError::Timeout) => match &self.take {
+                    Some(t) if t.started.elapsed() > if t.listen { MAX_LISTEN } else { MAX_TAKE } => self.finish(),
                     Some(t) => {
                         let view = View::Listening {
                             seconds: t.started.elapsed().as_secs_f32(),

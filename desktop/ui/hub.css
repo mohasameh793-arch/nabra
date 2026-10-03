@@ -435,3 +435,5 @@ button.chip:hover { background: var(--hover); }
 .link { border: 0; background: none; color: var(--accent); cursor: pointer; font: inherit; font-size: 12.5px; padding: 2px 4px; }
 .people-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0 4px; font-size: 12.5px; }
 .people-bar .add-person { width: 110px; padding: 3px 8px; border-radius: 999px; font-size: 12.5px; }
+.transcript li.flash .said { animation: flash 2.4s ease-out; }
+@keyframes flash { 0%, 40% { background: var(--accent-4); } }

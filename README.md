@@ -81,10 +81,14 @@ fully offline.
 
 | Do this | What happens |
 |---|---|
-| **Hold `Right Ctrl`**, talk, release | Your words are typed where your cursor is |
+| **Hold `Right Ctrl`**, talk, release | Your words are typed where your cursor is (no Right Ctrl or a Copilot key? pick another key in Settings → General) |
 | Hover the **pill** on the right edge of the screen → click the **mic** | Hands-free dictation: talk as long as you like, click **■** to insert |
 | **Hold `Right Alt`** and say a command | Edit text with your voice (see below) |
 | **`Ctrl` + `Alt` + `N`**, or the pill's **record** button | Start / stop meeting notes |
+| **`Ctrl` + `Alt` + `T`** (press again to stop) | **Transcribe what's playing**: a WhatsApp voice note, a video. Shown on the pill to read or copy; never typed or saved |
+| **`Ctrl` + `Alt` + `U`** during meeting notes (or **Catch me up** in the meeting window) | **Catch me up**: the last 5 minutes in 3 bullets |
+| **Hold `Right Alt`** and ask about a past call: *"what did Zaid say about the launch?"*, «إيه اللي اتفقنا عليه في الميتنج؟» | **Ask my meetings**: the answer, from your own notes, with **Open in notes** to jump to that moment |
+| Drag the pill | It snaps to the left, bottom or right middle of the screen, and follows your mouse to other monitors |
 | Double-click the pill, or the tray icon → **Open Nabra** | Open the Nabra window |
 | Say **"new line"** / «سطر جديد» while dictating | Line break (**"new paragraph"** / «فقرة جديدة» for a blank line) |
 
@@ -153,8 +157,13 @@ It only ever forces a language when it's unsure, because forcing one would make 
 ## Privacy
 
 - **Audio stays on your PC.** It's processed in memory and thrown away. Meeting audio is never saved.
-- **No account, no telemetry, no cloud.** Nabra makes network requests only to download models during setup
-  and, if you connect one, to fetch your own calendar link.
+- **No account, no telemetry, no cloud.** Nabra only goes online to: download the models during setup (each file
+  checked against a fixed SHA-256), check GitHub for a newer version (every few minutes; turn it off in
+  Settings → About), and, if you connect one, fetch your own calendar link. What you say is never sent anywhere.
+- **The engine is locked to Nabra.** It listens only on `127.0.0.1` and needs a secret made fresh at every
+  launch, so other programs and web pages can't use it.
+- **Voices:** call notes keep voiceprints (numbers, never audio) so you can name speakers; Settings → Privacy →
+  Forget voices deletes them all. Dictation history can be kept forever, 30 or 7 days, or not at all.
 - **Your data:** settings, dictionary, snippets, history and notes are in `%APPDATA%\app.nabra.v2\`. Models are
   in `%LOCALAPPDATA%\Nabra\assets\`, logs in `%LOCALAPPDATA%\Nabra\logs\` (errors and timings, never what you
   said). Delete history anytime in Settings → Privacy.

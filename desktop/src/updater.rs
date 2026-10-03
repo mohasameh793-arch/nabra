@@ -60,7 +60,13 @@ pub async fn check(app: &AppHandle) -> Result<Status, String> {
 /// The user clicked Update: download (showing progress), install. On Windows, install closes Nabra and the
 /// installer reopens the new version.
 pub async fn install(app: &AppHandle) -> Result<(), String> {
+    // Update can be clicked on the pill and in the window at once: only one install runs.
+    static INSTALLING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if INSTALLING.swap(true, Ordering::SeqCst) {
+        return Ok(());
+    }
     let result = install_inner(app).await;
+    INSTALLING.store(false, Ordering::SeqCst);
     if let Err(e) = &result {
         let _ = app.emit("update", json!({ "status": "failed", "message": e }));
         app.state::<App>().tell(Control::UpdateFailed(e.clone()));

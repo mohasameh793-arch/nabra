@@ -54,6 +54,10 @@ pub struct Settings {
     pub auto_update: bool,
     /// Where the pill sits: "right" | "left" | "bottom" (drag it to change).
     pub pill_dock: String,
+    /// The push-to-talk key (see keyboard::TALK_KEYS).
+    pub talk_key: String,
+    /// How long dictation history is kept: "forever", "30" / "7" (days) or "off" (not saved at all).
+    pub history_keep: String,
     /// Version that ran last time (to say "Nabra updated to …" once after an update).
     pub last_version: String,
 }
@@ -99,6 +103,8 @@ impl Default for Settings {
             meeting_prompts: true,
             auto_update: true,
             pill_dock: "right".into(),
+            talk_key: "right_ctrl".into(),
+            history_keep: "forever".into(),
             last_version: String::new(),
         }
     }
@@ -349,12 +355,20 @@ impl Store {
         write_atomic(&self.voices_path(), &serde_json::to_vec(&all).unwrap())
     }
 
-    /// Forget every saved voice (Settings → Privacy).
+    /// Forget every voiceprint (Settings → Privacy): the named voices, and the voices kept in each saved note
+    /// for naming later. Names and transcripts stay.
     pub fn forget_voices(&self) -> Result<(), String> {
         match fs::remove_file(self.voices_path()) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
-            _ => Ok(()),
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.to_string()),
+            _ => {}
         }
+        for mut note in self.notes() {
+            if note.speakers.iter().any(|s| !s.voice.is_empty()) {
+                note.speakers.iter_mut().for_each(|s| s.voice.clear());
+                self.save_note(&note)?;
+            }
+        }
+        Ok(())
     }
 
     pub fn snippets_path(&self) -> PathBuf {
@@ -430,6 +444,24 @@ impl Store {
             }
         }
         self.rewrite_history(&items)
+    }
+
+    /// Apply Settings → Privacy → "Keep dictation history": drop entries older than `keep` days ("off" = all).
+    pub fn prune_history(&self, keep: &str) -> Result<(), String> {
+        let days: u64 = match keep {
+            "off" => 0,
+            d => match d.parse() {
+                Ok(n) => n,
+                Err(_) => return Ok(()), // "forever"
+            },
+        };
+        let cutoff = now_ms().saturating_sub(days * 86_400_000);
+        let all = self.history();
+        let kept: Vec<Dictation> = all.iter().filter(|d| days > 0 && d.id >= cutoff).cloned().collect();
+        if kept.len() != all.len() {
+            self.rewrite_history(&kept)?;
+        }
+        Ok(())
     }
 
     pub fn clear_history(&self) -> Result<(), String> {

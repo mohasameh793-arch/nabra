@@ -57,6 +57,8 @@ async function run() {
 }
 
 export function wire() {
+  // e.g. not enough disk space for the local AI model: speech still installs, the user should know why.
+  listen("setup-note", (e) => toast(e.payload));
   listen("setup-progress", (e) => {
     progress[e.payload.part] = e.payload;
     if (e.payload.stage === "Done") {

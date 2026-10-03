@@ -89,9 +89,19 @@ _COMMANDS = [
 _COMMAND_RES = [(name, re.compile(rf"^\s*(?:{words})\s*[.!،]?\s*$", re.IGNORECASE)) for name, words in _COMMANDS]
 
 
+# A question about past calls ("what did Zaid say about the launch?", "إيه اللي اتفقنا عليه في الميتنج؟").
+_MEETING_WORDS = re.compile(r"\b(?:meetings?|calls?|standup|sync)\b|ميتنج|ميتينج|اجتماع|الاجتماع|المكالمة|الكول|المكالمه", re.IGNORECASE)
+_QUESTION = re.compile(r"\?|؟|^\s*(?:what|who|when|why|how|did|does|do|was|were|which)\b|\b(?:say|said|agree|agreed|decide|decided|mention|mentioned)\b|"
+                       r"إيه|ايه|ماذا|ما هو|مين|من قال|متى|امتى|ليش|ليه|كيف|ازاي|قال|قالت|قالوا|اتفقنا|اتفقوا|قررنا", re.IGNORECASE)
+_ASK = re.compile(r"^\s*(?:ask my (?:meetings|notes)|search my (?:meetings|notes)|اسأل(?: عن)?|دور في)\b", re.IGNORECASE)
+
+
 def classify(instruction: str) -> str:
-    """Map a spoken instruction to a fixed action, or "transform" (rewrite the target text with the LLM)."""
+    """Map a spoken instruction to a fixed action, "ask" (a question about past calls), or "transform"
+    (rewrite the target text with the LLM)."""
     for name, pattern in _COMMAND_RES:
         if pattern.match(instruction):
             return name
+    if _ASK.search(instruction) or (_MEETING_WORDS.search(instruction) and _QUESTION.search(instruction)):
+        return "ask"
     return "transform"

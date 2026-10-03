@@ -23,6 +23,8 @@
 
 !macro NSIS_HOOK_POSTUNINSTALL
   DeleteRegValue HKCU "${NABRA_RUN_KEY}" "Nabra"
+  ; The private calendar link lives in Windows Credential Manager: don't leave it behind.
+  nsExec::Exec 'cmdkey /delete:Nabra/calendar-ics'
   ; "Delete app data" ticked: also remove the downloaded models (≈10 GB) and logs. Otherwise they're kept,
   ; so reinstalling or upgrading doesn't download them again.
   ${If} $DeleteAppDataCheckboxState = 1

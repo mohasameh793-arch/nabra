@@ -37,3 +37,7 @@ body.meeting-window { display: grid; grid-template-rows: 40px 1fr; background: v
 .mw-panel .overview { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
 .mw-wait { text-align: center; color: var(--muted); padding: 36px 16px; display: flex; flex-direction: column; gap: 6px; align-items: center; }
 .mw-wait b { color: var(--ink); font-size: 15px; }
+.mw-live.stopped #mw-catchup { display: none; }
+.mw-caught { background: var(--card); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 12px; padding: 10px 14px; font-size: 13.5px; }
+.mw-caught .row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+#mw-caught-text { white-space: pre-wrap; unicode-bidi: plaintext; }

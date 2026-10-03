@@ -13,13 +13,19 @@ use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::Accessibility::{
-    CUIAutomation, IUIAutomation, TreeScope_Descendants, UIA_ControlTypePropertyId, UIA_ListItemControlTypeId,
+    CUIAutomation, IUIAutomation, IUIAutomationElement, TreeScope_Descendants, UIA_ControlTypePropertyId,
+    UIA_ListControlTypeId, UIA_ListItemControlTypeId,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
 };
 
 const MAX_NAMES: usize = 30;
+/// Only lists inside something named like the participant panel count (not the chat list, not the web page).
+const PEOPLE_PANELS: [&str; 12] = [
+    "participant", "people", "attendee", "in this meeting", "in the meeting", "in call", "roster", "المشارك",
+    "الأشخاص", "الحضور", "الحاضرين", "في الاجتماع",
+];
 const BROWSERS: [&str; 6] = ["chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe", "vivaldi.exe"];
 const MEETING_APPS: [&str; 3] = ["zoom.exe", "ms-teams.exe", "teams.exe"];
 /// List items in meeting apps that aren't people.
@@ -89,20 +95,45 @@ unsafe fn process_name(hwnd: HWND) -> String {
     path.rsplit('\\').next().unwrap_or_default().to_lowercase()
 }
 
+/// The names in the window's participant list: list items of lists that sit in a panel named like
+/// "Participants" / "People" / "In this meeting" (the list itself or up to 3 parents).
 unsafe fn list_items(uia: &IUIAutomation, hwnd: HWND) -> Vec<String> {
     let mut out = Vec::new();
     let Ok(root) = uia.ElementFromHandle(hwnd) else { return out };
-    let Ok(cond) = uia.CreatePropertyCondition(UIA_ControlTypePropertyId, &VARIANT::from(UIA_ListItemControlTypeId.0))
-    else {
+    let (Ok(is_list), Ok(is_item)) = (
+        uia.CreatePropertyCondition(UIA_ControlTypePropertyId, &VARIANT::from(UIA_ListControlTypeId.0)),
+        uia.CreatePropertyCondition(UIA_ControlTypePropertyId, &VARIANT::from(UIA_ListItemControlTypeId.0)),
+    ) else {
         return out;
     };
-    let Ok(items) = root.FindAll(TreeScope_Descendants, &cond) else { return out };
-    for i in 0..items.Length().unwrap_or(0).min(500) {
-        if let Ok(name) = items.GetElement(i).and_then(|e| e.CurrentName()) {
-            out.push(name.to_string());
+    let Ok(lists) = root.FindAll(TreeScope_Descendants, &is_list) else { return out };
+    for i in 0..lists.Length().unwrap_or(0).min(50) {
+        let Ok(list) = lists.GetElement(i) else { continue };
+        if !in_people_panel(uia, &list) {
+            continue;
+        }
+        let Ok(items) = list.FindAll(TreeScope_Descendants, &is_item) else { continue };
+        for j in 0..items.Length().unwrap_or(0).min(300) {
+            if let Ok(name) = items.GetElement(j).and_then(|e| e.CurrentName()) {
+                out.push(name.to_string());
+            }
         }
     }
     out
+}
+
+unsafe fn in_people_panel(uia: &IUIAutomation, list: &IUIAutomationElement) -> bool {
+    let Ok(walker) = uia.ControlViewWalker() else { return false };
+    let mut el = Some(list.clone());
+    for _ in 0..4 {
+        let Some(e) = el else { break };
+        let name = e.CurrentName().map(|n| n.to_string().to_lowercase()).unwrap_or_default();
+        if PEOPLE_PANELS.iter().any(|p| name.contains(p)) {
+            return true;
+        }
+        el = walker.GetParentElement(&e).ok();
+    }
+    false
 }
 
 /// "Ahmed Ali (Host), Muted, Video off" → "Ahmed Ali"; drops the user's own entry and UI items.
@@ -177,8 +208,8 @@ mod live {
             let mut wins: Vec<HWND> = Vec::new();
             let _ = EnumWindows(Some(explorer), LPARAM(&mut wins as *mut _ as isize));
             let items: Vec<String> = wins.iter().flat_map(|w| list_items(&uia, *w)).collect();
-            println!("{} explorer windows, {} list items: {:?}", wins.len(), items.len(), items.iter().take(8).collect::<Vec<_>>());
-            assert!(!items.is_empty());
+            // Explorer has no participant panel, so this checks the UI Automation plumbing runs (and finds nothing).
+            println!("{} explorer windows, {} participant names: {:?}", wins.len(), items.len(), items.iter().take(8).collect::<Vec<_>>());
         }
     }
 }

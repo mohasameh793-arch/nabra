@@ -56,6 +56,14 @@ function render(v) {
     case "busy":
       recent.fill(0);
       break;
+    case "reveal":
+      $("reveal-title").textContent = v.title;
+      $("reveal-text").textContent = v.text;
+      $("reveal-open").hidden = !v.note;
+      $("reveal-open").dataset.note = v.note || "";
+      $("reveal-open").dataset.t = String(v.t || 0);
+      $("reveal-copy").textContent = "Copy";
+      break;
     case "meeting":
       $("msg").textContent = `${v.title} is starting`;
       $("take").textContent = "Take notes";
@@ -128,14 +136,17 @@ document.addEventListener("pointermove", (e) => {
   document.body.classList.add("dragging");
   invoke("pill_drag", { on: true });
 });
-document.addEventListener("pointerup", () => {
+function endPress() {
   if (press?.dragging) {
     dragged = true; // swallow the click that follows the drop
     document.body.classList.remove("dragging");
     invoke("pill_drag", { on: false });
   }
   press = null;
-});
+}
+document.addEventListener("pointerup", endPress);
+document.addEventListener("pointercancel", endPress); // touch/pen gave up: still end the drag
+document.addEventListener("lostpointercapture", endPress);
 const unlessDragged = (fn) => () => (dragged ? (dragged = false) : fn());
 
 $("mic").addEventListener("click", unlessDragged(() => invoke("pill_mic")));
@@ -168,6 +179,16 @@ $("chev").addEventListener("click", async () => {
 });
 $("take").addEventListener("click", () => invoke($("take").dataset.action === "update" ? "install_update" : "pill_notes").catch(() => {}));
 $("dismiss").addEventListener("click", () => invoke("pill_dismiss"));
+$("reveal-close").addEventListener("click", () => invoke("pill_dismiss"));
+$("reveal-copy").addEventListener("click", async () => {
+  await invoke("copy_text", { text: $("reveal-text").textContent }).catch(() => {});
+  $("reveal-copy").textContent = "Copied";
+});
+$("reveal-open").addEventListener("click", () => {
+  const { note, t } = $("reveal-open").dataset;
+  invoke("open_hub", { page: `note:${note}:${t}` });
+  invoke("pill_dismiss");
+});
 $("stop").addEventListener("click", () => invoke($("stop").dataset.action === "notes" ? "pill_notes" : "pill_mic"));
 // Double-click the mic button to open the Nabra window.
 $("mic").addEventListener("dblclick", unlessDragged(() => invoke("open_hub", { page: null })));

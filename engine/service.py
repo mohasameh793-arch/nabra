@@ -7,11 +7,20 @@ POST /transform {"text", "instruction"}      → {"text"}  (user-requested rewri
 POST /note?langs=ar,en[&partial=1]         WAV body → {"text", "language"}      (calls: no LLM, never stored)
 POST /summary   {"lines": [...], "language": "ar"|null}  → {"summary", "title"}
 POST /voice                                 WAV body → {"voice": [256 floats] | []}   (who is speaking)
+POST /catchup  {"lines": [...]}             → {"text"}   (the last minutes of a call in 3 bullets)
+POST /ask      {"question", "snippets"}     → {"text"}   (answer from past call notes, citing [n])
+
+Every request must carry the X-Nabra-Token header the app passed in NABRA_TOKEN (so no other program or web
+page can use the engine), and a Host of 127.0.0.1/localhost (blocks DNS rebinding). /health also returns
+"proof", so the app can tell its own engine from anything else listening on the port.
 
 Transcripts are never written to logs.
 """
+import hashlib
+import hmac
 import json
 import logging
+import os
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -93,6 +102,18 @@ class Engine:
         text = self.llm.summarize(lines, language)
         return {"summary": text, "title": self.llm.title(text) if text else ""}
 
+    def catch_up(self, lines: list[dict], me: str = "") -> str:
+        if not self.llm:
+            raise RuntimeError("local AI model is not available")
+        with self.gpu:  # one heavy GPU job at a time: live call text waits a few seconds
+            return self.llm.catch_up(lines, me)
+
+    def ask(self, question: str, snippets: list[dict]) -> str:
+        if not self.llm:
+            raise RuntimeError("local AI model is not available")
+        with self.gpu:
+            return self.llm.ask(question, snippets)
+
     def _keep(self, wav: bytes, result: dict) -> None:
         """Opt-in (--keep-clips): your own dictations become benchmark clips to review later."""
         self.keep_clips.mkdir(parents=True, exist_ok=True)
@@ -104,8 +125,26 @@ class Engine:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
+TOKEN = os.environ.get("NABRA_TOKEN", "")
+MAX_BODY = 64 * 1024 * 1024  # a 5-minute dictation is ~10 MB
+
+
+def health_proof() -> str:
+    return hmac.new(TOKEN.encode(), b"nabra-health", hashlib.sha256).hexdigest() if TOKEN else ""
+
+
 def handler_for(engine: Engine):
     class Handler(BaseHTTPRequestHandler):
+        def allowed(self) -> bool:
+            host = (self.headers.get("Host") or "").split(":")[0].lower()
+            if host not in ("127.0.0.1", "localhost"):
+                self.reply(403, {"error": "forbidden"})
+                return False
+            if TOKEN and not hmac.compare_digest(self.headers.get("X-Nabra-Token", ""), TOKEN):
+                self.reply(401, {"error": "unauthorized"})
+                return False
+            return True
+
         def reply(self, status: int, payload: dict) -> None:
             body = json.dumps(payload, ensure_ascii=False).encode()
             self.send_response(status)
@@ -115,15 +154,23 @@ def handler_for(engine: Engine):
             self.wfile.write(body)
 
         def do_GET(self):
+            if not self.allowed():
+                return
             if self.path != "/health":
                 return self.reply(404, {"error": "not found"})
-            self.reply(200, {"device": engine.speech.device, "llm": bool(engine.llm and engine.llm.ready())})
+            self.reply(200, {"device": engine.speech.device, "llm": bool(engine.llm and engine.llm.ready()),
+                             "proof": health_proof()})
 
         def do_POST(self):
             url = urlparse(self.path)
             q = parse_qs(url.query)
             langs = [c for c in q.get("langs", [""])[0].split(",") if c]
-            body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            if not self.allowed():
+                return
+            size = int(self.headers.get("Content-Length") or 0)
+            if size > MAX_BODY:
+                return self.reply(413, {"error": "too large"})
+            body = self.rfile.read(size)
             try:
                 if url.path == "/dictate":
                     self.reply(200, engine.dictate(body, langs, q.get("mode", ["clean"])[0], q.get("style", ["formal"])[0]))
@@ -136,6 +183,12 @@ def handler_for(engine: Engine):
                     self.reply(200, engine.note(body, langs, q.get("partial", ["0"])[0] == "1"))
                 elif url.path == "/voice":
                     self.reply(200, {"voice": engine.voices.embed(body)})
+                elif url.path == "/catchup":
+                    req = json.loads(body)
+                    self.reply(200, {"text": engine.catch_up(req["lines"], req.get("me", ""))})
+                elif url.path == "/ask":
+                    req = json.loads(body)
+                    self.reply(200, {"text": engine.ask(req["question"], req["snippets"])})
                 elif url.path == "/summary":
                     req = json.loads(body)
                     self.reply(200, engine.summary(req["lines"], req.get("language")))

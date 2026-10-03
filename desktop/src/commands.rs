@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Manager, State};
 
 use crate::dictation::Control;
-use crate::keyboard::{COMMAND_KEY_LABEL, NOTES_KEY_LABEL, TALK_KEY_LABEL};
+use crate::keyboard::{talk_key_label, CATCH_UP_KEY_LABEL, COMMAND_KEY_LABEL, LISTEN_KEY_LABEL, NOTES_KEY_LABEL};
 use crate::store::{Dictation, Line, Note, NoteCard, Pad, Settings, Snippet, Word};
 use crate::{assets, autostart, calendar, keyboard, meeting, secrets, sidecar, sound, App, CALENDAR_SECRET};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -19,14 +19,16 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Res<T> + Send + 'static
 
 #[tauri::command]
 fn boot(state: State<App>) -> Value {
+    let settings = state.settings.lock().unwrap().clone(); // settings first, then meeting (same order everywhere)
     let meeting = state.meeting.lock().unwrap();
     json!({
-        "settings": *state.settings.lock().unwrap(),
+        "settings": settings,
         "engine": *state.engine.lock().unwrap(),
         "meeting": meeting.as_ref().map(|m| json!({ "id": m.id, "elapsed": m.started.elapsed().as_secs_f32() })),
-        "keys": { "talk": TALK_KEY_LABEL, "notes": NOTES_KEY_LABEL, "command": COMMAND_KEY_LABEL },
+        "keys": { "talk": talk_key_label(), "notes": NOTES_KEY_LABEL, "command": COMMAND_KEY_LABEL, "listen": LISTEN_KEY_LABEL, "catch_up": CATCH_UP_KEY_LABEL },
+        "talk_keys": crate::keyboard::TALK_KEYS.iter().map(|k| json!({ "id": k.0, "label": k.1 })).collect::<Vec<_>>(),
         "calendar_connected": secrets::get(CALENDAR_SECRET).is_some(),
-        "setup_ready": assets::ready(),
+        "setup_ready": assets::speech_ready(), // the AI model may still be downloading
         "autostart": autostart::enabled(),
         "version": env!("CARGO_PKG_VERSION"),
         "update": state.update.lock().unwrap().as_ref().map(|u| u.version.clone()),
@@ -34,10 +36,18 @@ fn boot(state: State<App>) -> Value {
 }
 
 #[tauri::command]
-fn save_settings(state: State<App>, settings: Settings) -> Res<()> {
-    state.store.save_settings(&settings)?;
-    *state.settings.lock().unwrap() = settings;
-    Ok(())
+fn save_settings(state: State<App>, settings: Settings) -> Res<Settings> {
+    let mut current = state.settings.lock().unwrap();
+    let mut next = settings;
+    // Set by the app, not the settings screen (the hub may hold an older copy): keep the live values.
+    next.pill_dock = current.pill_dock.clone();
+    next.notes_consent = current.notes_consent;
+    next.last_version = current.last_version.clone();
+    state.store.save_settings(&next)?;
+    crate::keyboard::set_talk_key(&next.talk_key);
+    state.store.prune_history(&next.history_keep)?;
+    *current = next.clone();
+    Ok(next)
 }
 
 #[tauri::command]
@@ -189,6 +199,8 @@ fn setup_status() -> Value {
     json!({
         "gpu_vram_mb": vram,
         "ready": parts.iter().all(|p| p.installed()),
+        "speech_ready": assets::speech_ready(),
+        "free_mb": assets::free_mb(),
         "running": SETTING_UP.load(Ordering::SeqCst),
         "folder": assets::dir().display().to_string(),
         "parts": parts.iter().map(|p| json!({ "id": p, "label": p.label(), "mb": p.approx_mb(), "installed": p.installed() })).collect::<Vec<_>>(),
@@ -205,7 +217,29 @@ async fn setup_run(app: AppHandle) -> Res<()> {
         let app = app.clone();
         move || {
             let (_, parts) = assets::plan();
-            for part in parts.into_iter().filter(|p| !p.installed()) {
+            let missing: Vec<_> = parts.into_iter().filter(|p| !p.installed()).collect();
+            // Enough room? (+10% for unpacking.) If only speech fits, get speech now; the AI model is optional.
+            let need = |ps: &[assets::Part]| ps.iter().map(|p| p.approx_mb()).sum::<u64>() * 11 / 10;
+            let speech: Vec<_> = missing.iter().copied().filter(|p| p.is_speech()).collect();
+            let free = assets::free_mb().unwrap_or(u64::MAX);
+            let todo = if free >= need(&missing) {
+                missing
+            } else if free >= need(&speech) {
+                let _ = app.emit("setup-note", format!(
+                    "Not enough free space for the local AI model ({:.1} GB). Dictation and notes will work without AI cleanup and summaries.",
+                    need(&missing[speech.len()..]) as f64 / 1024.0));
+                speech
+            } else {
+                return Err(format!(
+                    "Nabra needs {:.1} GB free on the drive of {} and there is {:.1} GB. Free some space and try again.",
+                    need(&speech) as f64 / 1024.0, assets::dir().display(), free as f64 / 1024.0));
+            };
+            let mut told = false;
+            for part in todo {
+                if !told && assets::speech_ready() {
+                    told = true; // speech is in: start dictating while the AI model downloads
+                    app.state::<App>().tell(Control::SetupDone);
+                }
                 let _ = app.emit("setup-progress", json!({ "part": part, "done": 0, "total": 0, "stage": "Preparing" }));
                 let files = assets::resolve(part)?;
                 let total: u64 = files.iter().map(|f| f.size).sum();
@@ -315,6 +349,12 @@ fn live_lines(state: State<App>) -> Vec<Line> {
     state.meeting.lock().unwrap().as_ref().map(|m| m.lines()).unwrap_or_default()
 }
 
+/// "Catch me up" from the meeting window: the last 5 minutes in 3 bullets.
+#[tauri::command]
+async fn catch_up(app: AppHandle) -> Res<String> {
+    blocking(move || crate::meeting::catch_up(&app)).await
+}
+
 /// Speakers + attendee names of the live call or a saved note.
 #[tauri::command]
 fn note_speakers(state: State<App>, id: String) -> Res<Value> {
@@ -400,6 +440,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         check_updates,
         install_update,
         note_speakers,
+        catch_up,
         name_speaker,
         add_attendees,
         forget_voices,

@@ -100,5 +100,9 @@ assert classify("Scratch that.") == "delete_last" and classify("امسحها") =
 assert classify("سطر جديد") == "new_line" and classify("new paragraph") == "new_paragraph"
 assert classify("make it shorter") == "transform" and classify("ترجمها للإنجليزي") == "transform"
 assert classify("delete that paragraph about pricing") == "transform"  # only exact commands are fixed actions
+# Questions about past calls go to "ask my meetings"; edits of text never do.
+assert classify("what did Zaid say about the launch in the meeting?") == "ask"
+assert classify("إيه اللي اتفقنا عليه في الميتنج؟") == "ask" and classify("ask my meetings about pricing") == "ask"
+assert classify("خليها رسمية") == "transform" and classify("قصرها شوية") == "transform"
 
 print("engine selftest: all checks passed")

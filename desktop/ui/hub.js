@@ -59,7 +59,16 @@ document.addEventListener("history-cleared", () => PAGES[current].render());
 
 // ---------- backend events ----------
 // "settings:<section>" opens the settings dialog (e.g. from the pill's "Connect calendar").
-listen("goto", (e) => (e.payload.startsWith("settings:") ? openSettings(e.payload.slice(9)) : go(e.payload)));
+listen("goto", (e) => {
+  const p = e.payload;
+  if (p.startsWith("settings:")) return openSettings(p.slice(9));
+  if (p.startsWith("note:")) { // "note:<id>:<seconds>" from Ask my meetings
+    const [, id, t] = p.split(":");
+    go("notetaker");
+    return notetaker.openNote(id, Number(t) || 0);
+  }
+  go(p);
+});
 listen("dictation", (e) => { dictation.added(e.payload); if (current === "insights") insights.render(); });
 listen("engine", (e) => { state.boot.engine = e.payload; });
 notetaker.wire();

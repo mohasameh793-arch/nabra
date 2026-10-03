@@ -35,6 +35,8 @@ pub enum View {
     Meeting { title: String },
     /// A new version is ready: offer to update.
     Update { version: String },
+    /// A card with an answer: what was playing, a catch-up, or an answer from past calls (`note` + `t` = Open).
+    Reveal { title: String, text: String, note: Option<String>, t: f32 },
 }
 
 impl View {
@@ -47,6 +49,7 @@ impl View {
             View::Notes { .. } => return (170.0, 64.0),
             View::Working { .. } => return (300.0, 64.0),
             View::Result { .. } | View::Problem { .. } | View::Meeting { .. } | View::Update { .. } => return (420.0, 84.0),
+            View::Reveal { .. } => return (420.0, 260.0),
         };
         if dock == "bottom" { (h, w) } else { (w, h) } // the capsule lies down at the bottom
     }
@@ -145,28 +148,38 @@ fn follow_mouse(app: AppHandle) {
 /// Dragging: the pill follows the mouse; on release it snaps to the nearest of left-middle, bottom-middle and
 /// right-middle on that screen, and remembers it.
 pub fn drag(app: &AppHandle, on: bool) {
-    if on {
-        if DRAGGING.swap(true, Ordering::SeqCst) {
-            return;
-        }
-        let app = app.clone();
-        std::thread::spawn(move || {
-            while DRAGGING.load(Ordering::SeqCst) {
-                if let (Some(w), Ok(p)) = (app.get_webview_window("pill"), app.cursor_position()) {
-                    let size = w.outer_size().unwrap_or_default();
-                    let _ = w.set_position(PhysicalPosition::new(
-                        p.x as i32 - size.width as i32 / 2,
-                        p.y as i32 - size.height as i32 / 2,
-                    ));
-                }
-                std::thread::sleep(Duration::from_millis(12));
+    if !on {
+        DRAGGING.store(false, Ordering::SeqCst); // the drag thread notices, snaps and stops
+        return;
+    }
+    if DRAGGING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let button_down = || unsafe {
+            windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(
+                windows::Win32::UI::Input::KeyboardAndMouse::VK_LBUTTON.0 as i32,
+            ) < 0
+        };
+        // Also stop if the button was released but the page never said so (touch/pen cancel, focus loss).
+        while DRAGGING.load(Ordering::SeqCst) && button_down() {
+            if let (Some(w), Ok(p)) = (app.get_webview_window("pill"), app.cursor_position()) {
+                let size = w.outer_size().unwrap_or_default();
+                let _ = w.set_position(PhysicalPosition::new(
+                    p.x as i32 - size.width as i32 / 2,
+                    p.y as i32 - size.height as i32 / 2,
+                ));
             }
-        });
-        return;
-    }
-    if !DRAGGING.swap(false, Ordering::SeqCst) {
-        return;
-    }
+            std::thread::sleep(Duration::from_millis(12));
+        }
+        snap(&app);
+        DRAGGING.store(false, Ordering::SeqCst);
+    });
+}
+
+/// Dock at the nearest of the three spots on the mouse's screen and remember it.
+fn snap(app: &AppHandle) {
     let (Ok(p), Some(m)) = (app.cursor_position(), monitor(app)) else { return };
     let area = m.work_area();
     let (ax, ay, aw, ah) = (area.position.x as f64, area.position.y as f64, area.size.width as f64, area.size.height as f64);
@@ -198,6 +211,7 @@ fn size_of_payload(v: &serde_json::Value, dock: &str) -> (f64, f64) {
         "notes" => View::Notes { seconds: 0 },
         "working" => View::Working { label: String::new() },
         "result" | "problem" | "meeting" | "update" => View::Problem { message: String::new() },
+        "reveal" => View::Reveal { title: String::new(), text: String::new(), note: None, t: 0.0 },
         _ => View::Idle,
     };
     view.size(dock)

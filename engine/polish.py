@@ -1,4 +1,5 @@
 """Local LLM passes (Qwen3 via llama.cpp's OpenAI-compatible server): cleanup + guard, and call summaries."""
+import os
 import re
 
 import httpx
@@ -48,7 +49,8 @@ PART_CHARS = 6000  # transcript characters per summary request (fits an 8k conte
 class Llm:
     def __init__(self, base_url: str):
         self.base_url = base_url.rstrip("/")
-        self.http = httpx.Client()
+        key = os.environ.get("NABRA_LLM_KEY", "")  # llama-server runs with --api-key: only Nabra can use it
+        self.http = httpx.Client(headers={"Authorization": f"Bearer {key}"} if key else {})
 
     def ready(self) -> bool:
         try:
@@ -111,6 +113,33 @@ class Llm:
             {"role": "user", "content": f"Instruction: {instruction}\n\nText:\n{text}"},
         ], max_tokens=1500, timeout=120)
         return out.strip().strip('"“”«»')
+
+    def catch_up(self, lines: list[dict], me: str = "") -> str:
+        """The last few minutes of a live call as 3 short bullets, in the call's own language."""
+        spoken = [l for l in lines if l.get("text", "").strip()]
+        if not spoken:
+            return ""
+        lang = LANGUAGE_NAMES.get(main_language([l["text"] for l in spoken]), "English")
+        rows = "\n".join(f"{'ME' if l['who'] == 'you' else (l.get('name') or 'THEM')}: {l['text']}" for l in spoken)
+        return self.chat([
+            {"role": "system", "content": f"Someone stepped away from a call for a few minutes. In {lang}, write exactly 3 "
+                                          "short bullets (\"- \") with what they missed: what was said, decided or asked. "
+                                          "If someone asked ME something, make that the first bullet. Use only the transcript; "
+                                          "keep names and numbers exact; refer to ME as \"you\"."
+                                          + (f" ME's name is {me}: when someone addresses {me}, they mean you." if me else "")},
+            {"role": "user", "content": rows},
+        ], max_tokens=300, timeout=90)
+
+    def ask(self, question: str, snippets: list[dict]) -> str:
+        """Answer a question about past calls using only the given transcript snippets, citing them as [n]."""
+        rows = "\n".join(f"[{s['n']}] {s.get('date', '')} · {s.get('title', '')} · {s.get('who', '')}: {s['text']}" for s in snippets)
+        return self.chat([
+            {"role": "system", "content": "Answer the user's question about their past calls using ONLY the numbered transcript "
+                                          "lines. Answer in the language of the question, in 1–3 sentences, and cite the lines you "
+                                          "used like [3]. If the lines don't contain the answer, say you couldn't find it in the "
+                                          "notes. Never invent names, dates, numbers or decisions."},
+            {"role": "user", "content": f"Transcript lines:\n{rows}\n\nQuestion: {question}"},
+        ], max_tokens=300, timeout=90)
 
     def title(self, summary: str) -> str:
         """A short title for a note, in the summary's own language."""

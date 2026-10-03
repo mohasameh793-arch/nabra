@@ -29,6 +29,19 @@ export function startLive(meeting, lines = []) {
   call("note_speakers", { id: meeting.id }).then((j) => { if (ui.live?.id === meeting.id) ui.live.ppl = people(j); }).catch(() => {});
 }
 
+/** From "Ask my meetings" → Open: show that note with its transcript open at the cited moment. */
+export async function openNote(id, t) {
+  await select(id, false);
+  render();
+  const full = document.querySelector("#page-notetaker details.full");
+  if (!full) return;
+  full.open = true;
+  const rows = [...full.querySelectorAll("li[data-t]")];
+  const row = rows.reduce((best, r) => (Math.abs(r.dataset.t - t) < Math.abs((best?.dataset.t ?? Infinity) - t) ? r : best), null);
+  row?.scrollIntoView({ block: "center" });
+  row?.classList.add("flash");
+}
+
 async function select(id, rerender = true) {
   ui.selected = await call("note", { id });
   if (rerender) render();
@@ -123,7 +136,7 @@ function pastNotes() {
 const liveLines = () => [...ui.live.lines, ...Object.values(ui.live.partials ?? {})].sort((a, b) => a.t - b.t);
 
 function transcript(lines, ppl = people(null), noteId = null) {
-  return h("ol", { class: "transcript" }, lines.map((l) => h("li", { class: l.partial ? `${l.who} partial` : l.who },
+  return h("ol", { class: "transcript" }, lines.map((l) => h("li", { class: l.partial ? `${l.who} partial` : l.who, "data-t": l.t },
     whoCell(l, ppl, noteId, h("time", {}, clock(l.t))),
     h("div", { class: "said", dir: "auto" }, l.text))));
 }
@@ -175,8 +188,9 @@ export function wire() {
     else ui.live = null;
     if (!$("#page-notetaker").hidden) render();
   });
+  const live = (p) => ui.live && p.note === ui.live.id; // ignore a previous meeting still finishing
   listen("note-partial", (e) => {
-    if (!ui.live) return;
+    if (!live(e.payload)) return;
     const p = e.payload;
     ui.live.partials ??= {};
     if (p.text) ui.live.partials[p.who] = { ...p, partial: true };
@@ -184,7 +198,7 @@ export function wire() {
     if (!$("#page-notetaker").hidden) render();
   });
   listen("note-line", (e) => {
-    if (!ui.live) return;
+    if (!live(e.payload)) return;
     if (ui.live.partials) delete ui.live.partials[e.payload.who];
     ui.live.lines.push(e.payload);
     ui.live.lines.sort((a, b) => a.t - b.t);
@@ -197,8 +211,8 @@ export function wire() {
     if (!$("#page-notetaker").hidden) render();
   });
   listen("note-drop", (e) => {
-    if (!ui.live) return;
-    ui.live.lines = ui.live.lines.filter((l) => l.id !== e.payload);
+    if (!live(e.payload)) return;
+    ui.live.lines = ui.live.lines.filter((l) => l.id !== e.payload.id);
     if (!$("#page-notetaker").hidden) render();
   });
   listen("note-saved", async (e) => {

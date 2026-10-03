@@ -7,8 +7,7 @@ let section = "general";
 
 async function save(patch, message = "Saved") {
   const next = { ...state.settings, ...patch };
-  await call("save_settings", { settings: next });
-  state.settings = next;
+  state.settings = await call("save_settings", { settings: next }); // the app returns what it actually saved
   document.dispatchEvent(new CustomEvent("settings-changed"));
   toast(message);
 }
@@ -40,8 +39,17 @@ async function body() {
           t.checked = state.boot.autostart;
           return t;
         })()),
-        field("Dictate", "Hold to talk, release to insert. Or click the mic on the pill for hands-free.", h("span", {}, h("kbd", {}, state.boot.keys.talk))),
+        field("Dictate", "Hold to talk, release to insert. Or click the mic on the pill for hands-free. Pick another key if your keyboard has no Right Ctrl (or has a Copilot key).", (() => {
+          const pick = h("select", { "aria-label": "Talk key", onchange: async (e) => {
+            await save({ talk_key: e.target.value }, "Talk key saved");
+            state.boot.keys.talk = state.boot.talk_keys.find((k) => k.id === e.target.value)?.label ?? state.boot.keys.talk;
+          } }, state.boot.talk_keys.map((k) => h("option", { value: k.id }, k.label)));
+          pick.value = s.talk_key || "right_ctrl";
+          return pick;
+        })()),
         field("Note taking", "Start or stop call notes from anywhere.", h("span", {}, h("kbd", {}, state.boot.keys.notes))),
+        field("Transcribe what's playing", "Press to start, press again to stop. Nabra writes out what your PC is playing (a voice note, a video) so you can read it. Not saved anywhere.", h("span", {}, h("kbd", {}, state.boot.keys.listen))),
+        field("Catch me up", "During call notes: the last few minutes in three bullets.", h("span", {}, h("kbd", {}, state.boot.keys.catch_up))),
         field("Commands & transforms", "Hold and speak: \"make it shorter\", \"scratch that\", \"new line\". Works on selected text or your last dictation.", h("span", {}, h("kbd", {}, state.boot.keys.command))),
         field("Microphone", null, mic),
         field("Writing", "Clean fixes terms, punctuation and fillers with the local AI. Raw keeps exactly what was heard.", mode)];
@@ -99,7 +107,8 @@ async function body() {
       const setup = await call("mcp_setup");
       return [h("h2", {}, "Connections"),
         h("p", { class: "muted" }, "Let AI tools that support MCP (Claude, ChatGPT desktop, Cursor and others) search and read your call notes. ",
-          "The connection is read-only and runs on this PC."),
+          "The connection is read-only and starts on this PC, but "),
+        h("p", {}, h("b", {}, "whatever the AI reads is sent to that AI's company"), ", like anything you paste into it. That includes what other people said in your calls. Only connect it if you're fine with that."),
         h("div", { class: "field wide" }, h("div", { class: "stack" }, h("b", {}, "Claude Code"),
           h("div", { class: "code" }, setup.claude_code),
           h("button", { class: "btn", style: "justify-self:start", onclick: () => copyText(setup.claude_code, "Command copied") }, "Copy command"))),
@@ -115,6 +124,12 @@ async function body() {
       return [h("h2", {}, "Privacy"),
         h("p", { class: "muted" }, "Speech recognition and AI cleanup run on this PC. Nothing you say is uploaded."),
         field("Keep my dictation audio for accuracy testing", "Saves your own dictations (never call audio) to the clips folder in Nabra's data folder, so recognition can be measured on your voice.", keep),
+        field("Keep dictation history", "Your past dictations, shown in Dictation and Insights. Older ones are deleted automatically.", (() => {
+          const keep = h("select", { "aria-label": "Keep dictation history", onchange: (e) => save({ history_keep: e.target.value }, "Saved") },
+            [["forever", "Forever"], ["30", "30 days"], ["7", "7 days"], ["off", "Don't save"]].map(([v, l]) => h("option", { value: v }, l)));
+          keep.value = s.history_keep || "forever";
+          return keep;
+        })()),
         field("Delete all dictation history", "Removes every saved dictation. Notes and dictionary stay.",
           h("button", { class: "btn danger", onclick: async () => {
             if (!confirm("Delete all dictation history? This can't be undone.")) return;
@@ -123,7 +138,7 @@ async function body() {
             document.dispatchEvent(new CustomEvent("history-cleared"));
             toast("History deleted");
           } }, "Delete all")),
-        field("Forget saved voices", "Call notes remember the voices you name (as numbers, never audio) to label them in later calls. This forgets them all; your notes keep their names.",
+        field("Forget saved voices", "Call notes keep voiceprints (numbers, never audio) of the voices in your saved notes so you can name them, and of the voices you've named so Nabra recognises them in later calls. This deletes all of them; your notes keep their names and transcripts.",
           h("button", { class: "btn danger", onclick: async () => {
             if (!confirm("Forget every saved voice? Speakers will show as Speaker 1, 2… until you name them again.")) return;
             await call("forget_voices");

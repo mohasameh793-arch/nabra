@@ -23,6 +23,38 @@ const CUDA_WHEELS: [(&str, &str); 2] = [("nvidia-cublas-cu12", "12.9.2.10"), ("n
 /// The local LLM needs ~6 GB of VRAM next to Whisper's ~4 GB.
 const LLM_MIN_VRAM_MB: u64 = 10_000;
 
+/// Exact versions and SHA-256 of everything Setup downloads. A file that doesn't match is refused, so a changed
+/// or compromised upstream repo/release can't put different code or models on users' PCs. Update together with
+/// the versions above (scripts: query each source once, then paste here).
+const WHISPER_GPU_REV: &str = "edaa852ec7e145841d8ffdb056a99866b5f0a478";
+const WHISPER_CPU_REV: &str = "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf";
+const QWEN_REV: &str = "7c41481f57cb95916b40956ab2f0b139b296d974";
+const PINS: &[(&str, &str, u64)] = &[
+    ("Systran/faster-whisper-large-v3/config.json", "a9306624f5ec14270a014b647e5c316b6e03a662c369758d1b90697a7b0655b9", 2394),
+    ("Systran/faster-whisper-large-v3/model.bin", "69f74147e3334731bc3a76048724833325d2ec74642fb52620eda87352e3d4f1", 3087284237),
+    ("Systran/faster-whisper-large-v3/preprocessor_config.json", "7ccc62c6f2765af1f3b46c00c9b5894426835a05021c8b9c01eecb6dfb542711", 340),
+    ("Systran/faster-whisper-large-v3/tokenizer.json", "6d8cbd7cd0d8d5815e478dac67b85a26bbe77c1f5e0c6d76d1ce2abc0e5f21ca", 2480617),
+    ("Systran/faster-whisper-large-v3/vocabulary.json", "c69260f2ab26d659b7c398f9a2b2b48ed0df16c3b47d7326782fd9cba71690c1", 1068114),
+    ("dropbox-dash/faster-whisper-large-v3-turbo/config.json", "b0253ea6c0d3bea6b1e19e91a02acfd3b53f4467362efcb5a3e6b16c9b3a9b7e", 2263),
+    ("dropbox-dash/faster-whisper-large-v3-turbo/model.bin", "e76620f83d5f5b69efd3d87e3dc180c1bd21df9fbebacfd4335e5e1efcc018da", 1617884929),
+    ("dropbox-dash/faster-whisper-large-v3-turbo/preprocessor_config.json", "7ccc62c6f2765af1f3b46c00c9b5894426835a05021c8b9c01eecb6dfb542711", 340),
+    ("dropbox-dash/faster-whisper-large-v3-turbo/tokenizer.json", "297b13372ac43916285644fb9687add3cc62ee2a1adb60da3dc25cc94c1871fd", 2710337),
+    ("dropbox-dash/faster-whisper-large-v3-turbo/vocabulary.json", "c69260f2ab26d659b7c398f9a2b2b48ed0df16c3b47d7326782fd9cba71690c1", 1068114),
+    ("Qwen/Qwen3-8B-GGUF/Qwen3-8B-Q4_K_M.gguf", "d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785", 5027783488),
+    ("pypi/nvidia-cublas-cu12", "623f43027d40d44ceadf0043f002bd25cf353e8f13ce90b9a87057019f560661", 553162896),
+    ("pypi/nvidia-cudnn-cu12", "06e9b0026f3bad97d2b58666330fabec04fe1672f776661ecb0ce0029c27f142", 743068852),
+    ("llama/llama-b11200-bin-win-cuda-13.4-x64.zip", "ac88b6102fb9cb6344f897ddfa7400e67ff8d687ad34c124ca5764293ef5ef3f", 152319780),
+    ("llama/cudart-llama-bin-win-cuda-13.4-x64.zip", "738f8c251ac22b70c3ae6f83a10cf222725df0395246a2cf58f32bdb85fbe668", 423535356),
+];
+
+/// The pinned (sha256, size) for a download, or an error: nothing unpinned is ever downloaded.
+fn pin(key: &str) -> Result<(String, u64), String> {
+    PINS.iter()
+        .find(|p| p.0 == key)
+        .map(|p| (p.1.to_string(), p.2))
+        .ok_or_else(|| format!("No pinned checksum for {key}"))
+}
+
 pub fn dir() -> PathBuf {
     let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
     base.join("Nabra").join("assets")
@@ -70,15 +102,20 @@ pub fn qwen() -> PathBuf {
     dir().join("models").join(QWEN_FILE)
 }
 
-/// NVIDIA GPU memory in MB (via nvidia-smi, which ships with the driver), or None without one.
-pub fn gpu_vram_mb() -> Option<u64> {
+/// The NVIDIA GPU (via nvidia-smi, which ships with the driver): (memory in MB, compute capability ×10, e.g.
+/// 86 for an RTX 30-series), or None without one.
+pub fn gpu() -> Option<(u64, u32)> {
     use std::os::windows::process::CommandExt;
     let out = std::process::Command::new("nvidia-smi")
-        .args(["--query-gpu=memory.total", "--format=csv,noheader,nounits"])
+        .args(["--query-gpu=memory.total,compute_cap", "--format=csv,noheader,nounits"])
         .creation_flags(0x0800_0000)
         .output()
         .ok()?;
-    String::from_utf8_lossy(&out.stdout).lines().filter_map(|l| l.trim().parse::<u64>().ok()).max()
+    let line = String::from_utf8_lossy(&out.stdout).lines().next()?.to_string();
+    let mut fields = line.split(',').map(str::trim);
+    let mb = fields.next()?.parse().ok()?;
+    let cap = fields.next().and_then(|c| c.parse::<f32>().ok()).map(|c| (c * 10.0).round() as u32).unwrap_or(0);
+    Some((mb, cap))
 }
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
@@ -124,19 +161,49 @@ impl Part {
     }
 }
 
-/// What this PC should have: GPU → CUDA + large-v3 (+ the LLM when VRAM allows); otherwise turbo on CPU.
+/// Large-v3 on the GPU needs a card from 2016 on (compute 6.0+) with enough memory; the llama.cpp CUDA 13 build
+/// needs Turing (7.5+, RTX 20-series and newer). Anything less is better served by turbo on the processor than
+/// by downloading 4 GB of GPU files that fall back to a slow CPU run.
+const GPU_MIN_CAP: u32 = 60;
+const GPU_MIN_VRAM_MB: u64 = 3_500;
+const LLM_MIN_CAP: u32 = 75;
+
+/// What this PC should have, speech first: GPU → CUDA + large-v3 (+ the LLM when the card allows); else turbo on CPU.
 pub fn plan() -> (Option<u64>, Vec<Part>) {
-    let vram = gpu_vram_mb();
-    let parts = match vram {
-        Some(mb) if mb >= LLM_MIN_VRAM_MB => vec![Part::Cuda, Part::WhisperGpu, Part::Llama, Part::Qwen],
-        Some(_) => vec![Part::Cuda, Part::WhisperGpu],
-        None => vec![Part::WhisperCpu],
+    let g = gpu();
+    let parts = match g {
+        Some((mb, cap)) if cap >= GPU_MIN_CAP && mb >= GPU_MIN_VRAM_MB => {
+            let mut p = vec![Part::Cuda, Part::WhisperGpu];
+            if mb >= LLM_MIN_VRAM_MB && cap >= LLM_MIN_CAP {
+                p.extend([Part::Llama, Part::Qwen]);
+            }
+            p
+        }
+        _ => vec![Part::WhisperCpu],
     };
-    (vram, parts)
+    (g.map(|g| g.0), parts)
 }
 
-pub fn ready() -> bool {
-    plan().1.iter().all(|p| p.installed())
+/// Dictation can start: the speech parts are in (the local AI model may still be downloading).
+pub fn speech_ready() -> bool {
+    plan().1.iter().filter(|p| p.is_speech()).all(|p| p.installed())
+}
+
+impl Part {
+    pub fn is_speech(self) -> bool {
+        matches!(self, Part::Cuda | Part::WhisperGpu | Part::WhisperCpu)
+    }
+}
+
+/// Free space on the drive that holds Nabra's downloads, in MB.
+pub fn free_mb() -> Option<u64> {
+    use windows::core::HSTRING;
+    use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+    let d = dir();
+    let _ = fs::create_dir_all(&d);
+    let mut free = 0u64;
+    unsafe { GetDiskFreeSpaceExW(&HSTRING::from(d.as_os_str()), Some(&mut free), None, None) }.ok()?;
+    Some(free / 1_048_576)
 }
 
 // --- resolving pinned sources ---------------------------------------------------------------
@@ -162,18 +229,17 @@ fn get_json(url: &str) -> Result<Value, String> {
         .map_err(|e| e.to_string())
 }
 
-fn hf_files(repo: &str, wanted: &[&str], into: &Path) -> Result<Vec<Fetch>, String> {
-    let tree = get_json(&format!("https://huggingface.co/api/models/{repo}/tree/main"))?;
-    let files = tree.as_array().ok_or("Unexpected reply from Hugging Face")?;
+/// Files from a Hugging Face repo at a fixed commit, each checked against its pinned SHA-256.
+fn hf_files(repo: &str, rev: &str, wanted: &[&str], into: &Path) -> Result<Vec<Fetch>, String> {
     wanted
         .iter()
         .map(|name| {
-            let f = files.iter().find(|f| f["path"] == *name).ok_or(format!("{name} is missing from {repo}"))?;
+            let (sha256, size) = pin(&format!("{repo}/{name}"))?;
             Ok(Fetch {
-                url: format!("https://huggingface.co/{repo}/resolve/main/{name}"),
+                url: format!("https://huggingface.co/{repo}/resolve/{rev}/{name}"),
                 dest: into.join(name),
-                size: f["size"].as_u64().unwrap_or(0),
-                sha256: f["lfs"]["oid"].as_str().map(String::from), // large files carry their SHA-256
+                size,
+                sha256: Some(sha256),
                 unzip: None,
             })
         })
@@ -198,35 +264,32 @@ pub fn resolve(part: Part) -> Result<Vec<Fetch>, String> {
                     .as_array()
                     .and_then(|u| u.iter().find(|w| w["filename"].as_str().is_some_and(|f| f.ends_with("win_amd64.whl"))))
                     .ok_or(format!("No Windows package for {name}"))?;
+                let (sha256, size) = pin(&format!("pypi/{name}"))?;
                 Ok(Fetch {
                     url: wheel["url"].as_str().unwrap_or_default().into(),
                     dest: cuda().join(format!("{name}.whl")),
-                    size: wheel["size"].as_u64().unwrap_or(0),
-                    sha256: wheel["digests"]["sha256"].as_str().map(String::from),
+                    size,
+                    sha256: Some(sha256),
                     unzip: Some(is_dll), // a wheel is a zip; keep only nvidia/*/bin/*.dll
                 })
             })
             .collect(),
-        Part::WhisperGpu => hf_files(WHISPER_GPU_REPO, &WHISPER_FILES, &whisper_gpu()),
-        Part::WhisperCpu => hf_files(WHISPER_CPU_REPO, &WHISPER_FILES, &whisper_cpu()),
-        Part::Qwen => hf_files(QWEN_REPO, &[QWEN_FILE], &dir().join("models")),
-        Part::Llama => {
-            let release = get_json(&format!("https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/{LLAMA_TAG}"))?;
-            let assets = release["assets"].as_array().ok_or("Unexpected reply from GitHub")?;
-            LLAMA_ASSETS
-                .iter()
-                .map(|name| {
-                    let a = assets.iter().find(|a| a["name"] == *name).ok_or(format!("{name} missing from llama.cpp {LLAMA_TAG}"))?;
-                    Ok(Fetch {
-                        url: a["browser_download_url"].as_str().unwrap_or_default().into(),
-                        dest: dir().join("llama").join(name),
-                        size: a["size"].as_u64().unwrap_or(0),
-                        sha256: a["digest"].as_str().and_then(|d| d.strip_prefix("sha256:")).map(String::from),
-                        unzip: Some(keep_all),
-                    })
+        Part::WhisperGpu => hf_files(WHISPER_GPU_REPO, WHISPER_GPU_REV, &WHISPER_FILES, &whisper_gpu()),
+        Part::WhisperCpu => hf_files(WHISPER_CPU_REPO, WHISPER_CPU_REV, &WHISPER_FILES, &whisper_cpu()),
+        Part::Qwen => hf_files(QWEN_REPO, QWEN_REV, &[QWEN_FILE], &dir().join("models")),
+        Part::Llama => LLAMA_ASSETS
+            .iter()
+            .map(|name| {
+                let (sha256, size) = pin(&format!("llama/{name}"))?;
+                Ok(Fetch {
+                    url: format!("https://github.com/ggml-org/llama.cpp/releases/download/{LLAMA_TAG}/{name}"),
+                    dest: dir().join("llama").join(name),
+                    size,
+                    sha256: Some(sha256),
+                    unzip: Some(keep_all),
                 })
-                .collect()
-        }
+            })
+            .collect(),
     }
 }
 

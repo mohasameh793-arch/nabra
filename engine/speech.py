@@ -35,10 +35,16 @@ class Transcriber:
         _cuda_dlls_on_path(cuda_dir)
         from faster_whisper import WhisperModel
 
-        try:
-            self.model, self.device = WhisperModel(model, device="cuda", compute_type="float16"), "cuda"
-        except Exception as err:  # no NVIDIA GPU / old driver / out of VRAM
-            log.warning("GPU unavailable (%s), using CPU", type(err).__name__)
+        self.model, self.device = None, "cpu"
+        # float16 needs a recent card; older or smaller ones still run fast with int8 on the GPU.
+        for compute in ("float16", "int8_float16", "int8"):
+            try:
+                self.model, self.device = WhisperModel(model, device="cuda", compute_type=compute), "cuda"
+                break
+            except Exception as err:  # no NVIDIA GPU / old driver / unsupported type / out of VRAM
+                log.warning("GPU %s unavailable (%s)", compute, type(err).__name__)
+        if self.model is None:
+            log.warning("no usable GPU, using CPU")
             self.model, self.device = WhisperModel(model, device="cpu", compute_type="int8"), "cpu"
         # The first decode initializes CUDA kernels and the VAD model (~2–3 s). Pay that now.
         list(self.model.transcribe(np.zeros(SAMPLE_RATE, np.float32), language="en", vad_filter=True)[0])

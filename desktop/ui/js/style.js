@@ -30,8 +30,7 @@ export function render() {
 
 async function choose(kind, id) {
   const next = { ...state.settings, styles: { ...state.settings.styles, [kind]: id } };
-  await call("save_settings", { settings: next });
-  state.settings = next;
+  state.settings = await call("save_settings", { settings: next }); // the app returns what it actually saved
   toast("Style saved");
   render();
 }

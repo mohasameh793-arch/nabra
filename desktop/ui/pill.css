@@ -17,7 +17,7 @@ body {
   display: flex; align-items: center; justify-content: flex-end; padding-right: 2px;
 }
 body[data-view="idle"] .bar, body[data-view="hover"] .bar,
-body[data-view="listening"] .bar, body[data-view="busy"] .bar { display: none; }
+body[data-view="listening"] .bar, body[data-view="busy"] .bar, body[data-view="reveal"] .bar { display: none; }
 body:not([data-view="idle"]):not([data-view="hover"]) .dock { display: none; }
 
 /* ---- idle capsule + hover buttons (same layout as Wispr Flow's edge pill) ---- */
@@ -160,3 +160,20 @@ body[data-dock="bottom"] .lines i { width: 1.5px; height: var(--len, 3px); trans
 body[data-dock="bottom"][data-view="busy"] .lines i { height: 2px; }
 
 body.dragging, body.dragging * { cursor: grabbing !important; }
+
+#capsule, #mic, #notes, #wave { touch-action: none; } /* a finger drags the pill, it doesn't pan */
+
+/* ---- answer card ---- */
+.reveal {
+  display: none; flex-direction: column; gap: 8px; width: 400px; max-height: 246px; padding: 14px 14px 10px 16px;
+  border-radius: 16px; background: var(--ink); border: 1.5px solid var(--rim); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+body[data-view="reveal"] .reveal { display: flex; }
+.reveal b { font-size: 12.5px; color: var(--muted); font-weight: 600; unicode-bidi: plaintext; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reveal-text { font-size: 13.5px; line-height: 1.5; overflow-y: auto; white-space: pre-wrap; unicode-bidi: plaintext; user-select: text; cursor: text; }
+.reveal-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.reveal-actions button { border: 0; border-radius: 999px; padding: 5px 12px; font: 600 12px "Segoe UI", sans-serif; cursor: pointer; background: rgba(255, 255, 255, 0.12); color: var(--fg); }
+.reveal-actions button:hover { background: rgba(255, 255, 255, 0.22); }
+.reveal-actions #reveal-open { background: var(--fg); color: var(--ink); }
+.reveal-actions .x { background: none; color: var(--muted); padding: 5px 6px; }
+body[data-dock="left"] .reveal { align-self: center; }

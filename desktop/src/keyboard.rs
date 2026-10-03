@@ -3,13 +3,15 @@
 
 use std::mem::size_of;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::OnceLock;
 
 use windows::core::PWSTR;
 use windows::Win32::Foundation::{CloseHandle, HANDLE, HGLOBAL, HWND, LPARAM, LRESULT, WPARAM};
-use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, SetClipboardData};
+use windows::Win32::System::DataExchange::{
+    CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber, OpenClipboard, SetClipboardData,
+};
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
 use windows::Win32::System::Ole::CF_UNICODETEXT;
 use windows::Win32::System::Threading::{
@@ -33,18 +35,53 @@ pub enum Shortcut {
     CommandReleased,
     /// Right Alt was used as AltGr (another key pressed while held): not a voice command.
     CommandCancelled,
+    /// The talk key was part of a shortcut (e.g. Right Ctrl + C): not a dictation.
+    TalkCancelled,
+    /// Ctrl+Alt+T: start/stop transcribing what the PC is playing.
+    ListenToggle,
+    /// Ctrl+Alt+U: "catch me up" on the last minutes of the call.
+    CatchUp,
 }
 
-pub const TALK_KEY_LABEL: &str = "Right Ctrl";
 pub const NOTES_KEY_LABEL: &str = "Ctrl+Alt+N";
+pub const LISTEN_KEY_LABEL: &str = "Ctrl+Alt+T";
+pub const CATCH_UP_KEY_LABEL: &str = "Ctrl+Alt+U";
 pub const COMMAND_KEY_LABEL: &str = "Right Alt";
-const TALK_KEY: u32 = VK_RCONTROL.0 as u32;
-const NOTES_KEY: u32 = b'N' as u32;
 const COMMAND_KEY: u32 = VK_RMENU.0 as u32;
+
+/// Keys that can be the talk key: (setting id, label, virtual key, swallow it?). Keys with a side effect of
+/// their own (Caps Lock, Insert…) are swallowed so holding them only dictates. "copilot" = the Copilot key (F23).
+pub const TALK_KEYS: [(&str, &str, u32, bool); 7] = [
+    ("right_ctrl", "Right Ctrl", VK_RCONTROL.0 as u32, false),
+    ("right_shift", "Right Shift", 0xA1, false),
+    ("caps_lock", "Caps Lock", 0x14, true),
+    ("insert", "Insert", 0x2D, true),
+    ("scroll_lock", "Scroll Lock", 0x91, true),
+    ("pause", "Pause", 0x13, true),
+    ("copilot", "Copilot key", 0x86, true),
+];
+static TALK_KEY: AtomicU32 = AtomicU32::new(0); // index into TALK_KEYS
+
+/// Use the talk key chosen in Settings (unknown ids fall back to Right Ctrl).
+pub fn set_talk_key(id: &str) {
+    let i = TALK_KEYS.iter().position(|k| k.0 == id).unwrap_or(0);
+    TALK_KEY.store(i as u32, Ordering::SeqCst);
+}
+
+pub fn talk_key_label() -> &'static str {
+    TALK_KEYS[TALK_KEY.load(Ordering::SeqCst) as usize].1
+}
+
+/// Ctrl+Alt+<letter> shortcuts.
+const COMBOS: [(u32, Shortcut); 3] =
+    [(b'N' as u32, Shortcut::NotesToggle), (b'T' as u32, Shortcut::ListenToggle), (b'U' as u32, Shortcut::CatchUp)];
 const MASK_KEY: VIRTUAL_KEY = VIRTUAL_KEY(0xE8); // unassigned: makes a lone Alt release not open app menus
 
 static SINK: OnceLock<Sender<Shortcut>> = OnceLock::new();
 static TALK_HELD: AtomicBool = AtomicBool::new(false);
+static TALK_SPOILED: AtomicBool = AtomicBool::new(false);
+/// The Ctrl+Alt+<letter> key currently held (0 = none), so auto-repeat fires a shortcut only once.
+static COMBO_HELD: AtomicU32 = AtomicU32::new(0);
 static COMMAND_HELD: AtomicBool = AtomicBool::new(false);
 static COMMAND_SPOILED: AtomicBool = AtomicBool::new(false);
 
@@ -75,24 +112,44 @@ unsafe extern "system" fn on_key(code: i32, wparam: WPARAM, lparam: LPARAM) -> L
         } else if !synthetic && down && COMMAND_HELD.load(Ordering::SeqCst) && !COMMAND_SPOILED.swap(true, Ordering::SeqCst) {
             fire = Some(Shortcut::CommandCancelled); // AltGr + key: the user is typing, not commanding
         }
-        if !synthetic && key.vkCode == TALK_KEY {
+        let (_, _, talk_vk, swallow_talk) = TALK_KEYS[TALK_KEY.load(Ordering::SeqCst) as usize];
+        let combo = COMBOS.iter().find(|(vk, _)| *vk == key.vkCode).map(|(_, s)| *s);
+        if !synthetic && key.vkCode == talk_vk {
             // Auto-repeat sends many downs; only the first press and the release matter.
             if down && !TALK_HELD.swap(true, Ordering::SeqCst) {
+                TALK_SPOILED.store(false, Ordering::SeqCst);
                 fire = Some(Shortcut::TalkPressed);
-            } else if up && TALK_HELD.swap(false, Ordering::SeqCst) {
+            } else if up && TALK_HELD.swap(false, Ordering::SeqCst) && !TALK_SPOILED.load(Ordering::SeqCst) {
                 fire = Some(Shortcut::TalkReleased);
             }
-        } else if !synthetic && down && key.vkCode == NOTES_KEY && held(VK_CONTROL) && held(VK_MENU) {
-            if let Some(tx) = SINK.get() {
-                let _ = tx.send(Shortcut::NotesToggle);
+            if swallow_talk {
+                if let (Some(s), Some(tx)) = (fire, SINK.get()) {
+                    let _ = tx.send(s);
+                }
+                return LRESULT(1); // e.g. Caps Lock: dictate, don't toggle caps
             }
-            return LRESULT(1); // swallow it, so no "n" lands in the focused app
+        } else if !synthetic && down && TALK_HELD.load(Ordering::SeqCst) && !TALK_SPOILED.swap(true, Ordering::SeqCst) {
+            fire = Some(Shortcut::TalkCancelled); // Right Ctrl + C etc.: a shortcut, not a dictation
+        }
+        // Ctrl+Alt+<letter>. Not with Right Alt held: that's AltGr typing a character (e.g. ń on Polish layouts).
+        if let Some(shortcut) = combo.filter(|_| !synthetic) {
+            if down && held(VK_CONTROL) && held(VK_MENU) && !held(VK_RMENU) {
+                if COMBO_HELD.swap(key.vkCode, Ordering::SeqCst) != key.vkCode {
+                    if let Some(tx) = SINK.get() {
+                        let _ = tx.send(shortcut);
+                    }
+                }
+                return LRESULT(1); // swallow it, so no letter lands in the focused app
+            }
+            if up && COMBO_HELD.compare_exchange(key.vkCode, 0, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+                return LRESULT(1);
+            }
         }
         if let (Some(s), Some(tx)) = (fire, SINK.get()) {
             let _ = tx.send(s);
         }
     }
-    // Right Ctrl itself is never swallowed: it keeps working in every app.
+    // Modifier talk keys (Right Ctrl / Right Shift) are never swallowed: they keep working in every app.
     CallNextHookEx(None, code, wparam, lparam)
 }
 
@@ -212,33 +269,30 @@ pub fn read_clipboard() -> Option<String> {
     }
 }
 
-fn clear_clipboard() {
-    unsafe {
-        if OpenClipboard(Some(HWND::default())).is_ok() {
-            let _ = EmptyClipboard();
-            let _ = CloseClipboard();
-        }
-    }
-}
-
-/// The selected text in the focused app (via Ctrl+C), or None. The user's clipboard is put back after.
+/// The selected text in the focused app (via Ctrl+C), or None. The clipboard is never emptied first: if
+/// nothing is selected the app copies nothing and the clipboard (an image, files…) stays exactly as it was.
+/// If something was copied, the user's previous text is put back.
+// ponytail: a selection still replaces a copied image (as a manual Ctrl+C would); saving every clipboard format
+// would fix that if it matters.
 pub fn selected_text() -> Option<String> {
     let saved = read_clipboard();
-    clear_clipboard();
+    let before = unsafe { GetClipboardSequenceNumber() };
     press(VIRTUAL_KEY(b'C' as u16), true, false, 1);
-    let mut got = None;
+    let mut changed = false;
     for _ in 0..15 {
         std::thread::sleep(std::time::Duration::from_millis(20));
-        if let Some(t) = read_clipboard().filter(|t| !t.is_empty()) {
-            got = Some(t);
+        if unsafe { GetClipboardSequenceNumber() } != before {
+            changed = true;
+            std::thread::sleep(std::time::Duration::from_millis(20)); // let the app finish writing
             break;
         }
     }
-    match saved {
-        Some(old) => {
-            let _ = copy(&old);
-        }
-        None => clear_clipboard(),
+    if !changed {
+        return None;
+    }
+    let got = read_clipboard().filter(|t| !t.trim().is_empty());
+    if let Some(old) = saved {
+        let _ = copy(&old);
     }
     got
 }
