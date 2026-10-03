@@ -28,11 +28,16 @@
     </div>
   </div>
 
+  <!-- Listening / transcribing: the capsule with a live voice meter, or a spinner (like Flow) -->
+  <div class="wave" id="wave" role="status" aria-label="Listening">
+    <div class="lines" id="lines"></div>
+    <span class="spin" aria-hidden="true"></span>
+  </div>
+
   <!-- Everything else: a horizontal pill -->
   <div class="bar" id="bar" role="status" aria-live="polite">
     <button class="stop" id="stop" aria-label="Stop" hidden><span></span></button>
     <span class="dot" id="dot" aria-hidden="true"></span>
-    <span class="levels" id="levels" aria-hidden="true"></span>
     <span class="clock" id="clock"></span>
     <span class="msg" id="msg" dir="auto"></span>
     <span class="detail" id="detail"></span>

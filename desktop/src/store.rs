@@ -52,6 +52,8 @@ pub struct Settings {
     pub meeting_prompts: bool,
     /// Download and install signed updates from GitHub automatically.
     pub auto_update: bool,
+    /// Where the pill sits: "right" | "left" | "bottom" (drag it to change).
+    pub pill_dock: String,
     /// Version that ran last time (to say "Nabra updated to …" once after an update).
     pub last_version: String,
 }
@@ -96,6 +98,7 @@ impl Default for Settings {
             styles: Styles::default(),
             meeting_prompts: true,
             auto_update: true,
+            pill_dock: "right".into(),
             last_version: String::new(),
         }
     }

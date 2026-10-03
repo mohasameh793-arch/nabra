@@ -166,7 +166,7 @@ impl Controller {
         if take.command {
             return self.command(take, &audio);
         }
-        self.render(View::Working { label: "Transcribing…".into() });
+        self.render(View::Busy);
         let (langs, mode, style) = {
             let state = self.state();
             let s = state.settings.lock().unwrap();
@@ -179,15 +179,16 @@ impl Controller {
         };
 
         // Type into the app the user started in; if they switched away, use the clipboard instead.
-        let detail = if keyboard::focused_window() != take.window {
+        // Typed where the cursor is: nothing more to show (like Flow). Only a clipboard fallback is worth a note.
+        let fallback = if keyboard::focused_window() != take.window {
             let _ = keyboard::copy(&result.text);
-            "You switched windows, so it's on your clipboard".to_string()
+            Some("You switched windows, so it's on your clipboard".to_string())
         } else if let Err(e) = keyboard::type_text(&result.text) {
             let _ = keyboard::copy(&result.text);
-            format!("{e}, so it's on your clipboard")
+            Some(format!("{e}, so it's on your clipboard"))
         } else {
             self.last = Some(Inserted { window: take.window, text: result.text.clone() });
-            format!("{:.1}s", result.ms as f32 / 1000.0)
+            None
         };
 
         let entry = Dictation {
@@ -206,7 +207,13 @@ impl Controller {
             eprintln!("history: {e}");
         }
         let _ = self.app.emit("dictation", &entry);
-        self.done(result.text, detail);
+        match fallback {
+            Some(detail) => self.done(result.text, detail),
+            None => {
+                self.hold_until = None;
+                self.rest();
+            }
+        }
     }
 
     /// Right Alt: a fixed edit ("scratch that", "new line") or a transform of the selection / last dictation.

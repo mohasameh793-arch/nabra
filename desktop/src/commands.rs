@@ -359,6 +359,12 @@ fn pill_hover(state: State<App>, on: bool) {
     state.tell(Control::Hover(on));
 }
 
+/// The user is dragging the pill (`on`) or let go of it (snaps to left / bottom / right middle).
+#[tauri::command]
+fn pill_drag(app: AppHandle, on: bool) {
+    crate::pill::drag(&app, on);
+}
+
 #[tauri::command]
 fn pill_dismiss(state: State<App>) {
     state.tell(Control::Dismiss);
@@ -432,6 +438,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         close_meeting_window,
         copy_text,
         pill_hover,
+        pill_drag,
         pill_mic,
         pill_dismiss,
         pill_notes,

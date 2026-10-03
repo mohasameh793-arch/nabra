@@ -164,7 +164,6 @@ fn explain(e: ureq::Error) -> String {
 pub struct Dictated {
     pub text: String,
     pub language: Option<String>,
-    pub ms: u64,
     #[serde(default)]
     pub fixes: crate::store::Fixes,
 }
