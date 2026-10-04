@@ -15,6 +15,9 @@ use sha2::{Digest, Sha256};
 const WHISPER_GPU_REPO: &str = "Systran/faster-whisper-large-v3";
 const WHISPER_CPU_REPO: &str = "dropbox-dash/faster-whisper-large-v3-turbo";
 const WHISPER_FILES: [&str; 5] = ["config.json", "model.bin", "preprocessor_config.json", "tokenizer.json", "vocabulary.json"];
+/// For weak laptops: about 3× faster than turbo on a processor, still good Arabic and English.
+const WHISPER_SMALL_REPO: &str = "Systran/faster-whisper-small";
+const WHISPER_SMALL_FILES: [&str; 4] = ["config.json", "model.bin", "tokenizer.json", "vocabulary.txt"];
 const QWEN_REPO: &str = "Qwen/Qwen3-8B-GGUF";
 pub const QWEN_FILE: &str = "Qwen3-8B-Q4_K_M.gguf";
 const LLAMA_TAG: &str = "b11200";
@@ -29,6 +32,7 @@ const LLM_MIN_VRAM_MB: u64 = 10_000;
 const WHISPER_GPU_REV: &str = "edaa852ec7e145841d8ffdb056a99866b5f0a478";
 const WHISPER_CPU_REV: &str = "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf";
 const QWEN_REV: &str = "7c41481f57cb95916b40956ab2f0b139b296d974";
+const WHISPER_SMALL_REV: &str = "536b0662742c02347bc0e980a01041f333bce120";
 const PINS: &[(&str, &str, u64)] = &[
     ("Systran/faster-whisper-large-v3/config.json", "a9306624f5ec14270a014b647e5c316b6e03a662c369758d1b90697a7b0655b9", 2394),
     ("Systran/faster-whisper-large-v3/model.bin", "69f74147e3334731bc3a76048724833325d2ec74642fb52620eda87352e3d4f1", 3087284237),
@@ -40,6 +44,10 @@ const PINS: &[(&str, &str, u64)] = &[
     ("dropbox-dash/faster-whisper-large-v3-turbo/preprocessor_config.json", "7ccc62c6f2765af1f3b46c00c9b5894426835a05021c8b9c01eecb6dfb542711", 340),
     ("dropbox-dash/faster-whisper-large-v3-turbo/tokenizer.json", "297b13372ac43916285644fb9687add3cc62ee2a1adb60da3dc25cc94c1871fd", 2710337),
     ("dropbox-dash/faster-whisper-large-v3-turbo/vocabulary.json", "c69260f2ab26d659b7c398f9a2b2b48ed0df16c3b47d7326782fd9cba71690c1", 1068114),
+    ("Systran/faster-whisper-small/config.json", "b55496ac7940a7ae47d2c01eab40edfd8701feec1229d9cce3b40014383fb828", 2370),
+    ("Systran/faster-whisper-small/model.bin", "3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671", 483546902),
+    ("Systran/faster-whisper-small/tokenizer.json", "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab", 2203239),
+    ("Systran/faster-whisper-small/vocabulary.txt", "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913", 459861),
     ("Qwen/Qwen3-8B-GGUF/Qwen3-8B-Q4_K_M.gguf", "d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785", 5027783488),
     ("pypi/nvidia-cublas-cu12", "623f43027d40d44ceadf0043f002bd25cf353e8f13ce90b9a87057019f560661", 553162896),
     ("pypi/nvidia-cudnn-cu12", "06e9b0026f3bad97d2b58666330fabec04fe1672f776661ecb0ce0029c27f142", 743068852),
@@ -65,6 +73,9 @@ pub fn whisper_gpu() -> PathBuf {
 }
 pub fn whisper_cpu() -> PathBuf {
     dir().join("whisper").join("large-v3-turbo")
+}
+pub fn whisper_small() -> PathBuf {
+    dir().join("whisper").join("small")
 }
 pub fn cuda() -> PathBuf {
     dir().join("cuda")
@@ -124,6 +135,7 @@ pub enum Part {
     Cuda,
     WhisperGpu,
     WhisperCpu,
+    WhisperSmall,
     Llama,
     Qwen,
 }
@@ -134,6 +146,7 @@ impl Part {
             Part::Cuda => "NVIDIA CUDA runtime (cuBLAS + cuDNN)",
             Part::WhisperGpu => "Speech recognition: Whisper large-v3",
             Part::WhisperCpu => "Speech recognition: Whisper large-v3-turbo (CPU)",
+            Part::WhisperSmall => "Speech recognition: Whisper small (light, for this laptop)",
             Part::Llama => "Local AI server: llama.cpp (CUDA)",
             Part::Qwen => "Local AI model: Qwen3 8B",
         }
@@ -145,6 +158,7 @@ impl Part {
             Part::Cuda => 1_300,
             Part::WhisperGpu => 3_100,
             Part::WhisperCpu => 1_600,
+            Part::WhisperSmall => 490,
             Part::Llama => 580,
             Part::Qwen => 5_030,
         }
@@ -155,6 +169,7 @@ impl Part {
             Part::Cuda => cuda().join(".complete").exists(),
             Part::WhisperGpu => whisper_gpu().join(".complete").exists(),
             Part::WhisperCpu => whisper_cpu().join(".complete").exists(),
+            Part::WhisperSmall => whisper_small().join(".complete").exists(),
             Part::Llama => llama_server().exists() && dir().join("llama").join(".complete").exists(),
             Part::Qwen => qwen().exists(),
         }
@@ -168,7 +183,33 @@ const GPU_MIN_CAP: u32 = 60;
 const GPU_MIN_VRAM_MB: u64 = 3_500;
 const LLM_MIN_CAP: u32 = 75;
 
-/// What this PC should have, speech first: GPU → CUDA + large-v3 (+ the LLM when the card allows); else turbo on CPU.
+/// Turbo on the processor needs a strong one to feel instant; below this Nabra uses the small model.
+const TURBO_MIN_RAM_MB: u64 = 12_000;
+const TURBO_MIN_THREADS: usize = 8;
+
+/// Installed memory in MB.
+pub fn ram_mb() -> u64 {
+    use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+    let mut m = MEMORYSTATUSEX { dwLength: size_of::<MEMORYSTATUSEX>() as u32, ..Default::default() };
+    unsafe { GlobalMemoryStatusEx(&mut m) }.map(|_| m.ullTotalPhys / 1_048_576).unwrap_or(0)
+}
+
+/// The processor's thread count.
+pub fn threads() -> usize {
+    std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4)
+}
+
+/// The speech model for a PC without a usable NVIDIA GPU. A PC that already has turbo keeps it.
+fn cpu_tier(ram_mb: u64, threads: usize, has_turbo: bool) -> Part {
+    if has_turbo || (ram_mb >= TURBO_MIN_RAM_MB && threads >= TURBO_MIN_THREADS) {
+        Part::WhisperCpu
+    } else {
+        Part::WhisperSmall
+    }
+}
+
+/// What this PC should have, speech first: GPU → CUDA + large-v3 (+ the LLM when the card allows); a strong
+/// processor → turbo; a weak laptop → small.
 pub fn plan() -> (Option<u64>, Vec<Part>) {
     let g = gpu();
     let parts = match g {
@@ -179,7 +220,7 @@ pub fn plan() -> (Option<u64>, Vec<Part>) {
             }
             p
         }
-        _ => vec![Part::WhisperCpu],
+        _ => vec![cpu_tier(ram_mb(), threads(), Part::WhisperCpu.installed())],
     };
     (g.map(|g| g.0), parts)
 }
@@ -191,7 +232,7 @@ pub fn speech_ready() -> bool {
 
 impl Part {
     pub fn is_speech(self) -> bool {
-        matches!(self, Part::Cuda | Part::WhisperGpu | Part::WhisperCpu)
+        matches!(self, Part::Cuda | Part::WhisperGpu | Part::WhisperCpu | Part::WhisperSmall)
     }
 }
 
@@ -276,6 +317,7 @@ pub fn resolve(part: Part) -> Result<Vec<Fetch>, String> {
             .collect(),
         Part::WhisperGpu => hf_files(WHISPER_GPU_REPO, WHISPER_GPU_REV, &WHISPER_FILES, &whisper_gpu()),
         Part::WhisperCpu => hf_files(WHISPER_CPU_REPO, WHISPER_CPU_REV, &WHISPER_FILES, &whisper_cpu()),
+        Part::WhisperSmall => hf_files(WHISPER_SMALL_REPO, WHISPER_SMALL_REV, &WHISPER_SMALL_FILES, &whisper_small()),
         Part::Qwen => hf_files(QWEN_REPO, QWEN_REV, &[QWEN_FILE], &dir().join("models")),
         Part::Llama => LLAMA_ASSETS
             .iter()
@@ -394,6 +436,7 @@ pub fn mark_complete(part: Part) {
         Part::Cuda => cuda(),
         Part::WhisperGpu => whisper_gpu(),
         Part::WhisperCpu => whisper_cpu(),
+        Part::WhisperSmall => whisper_small(),
         Part::Llama => dir().join("llama"),
         Part::Qwen => return, // a single file: its presence is the marker
     };
@@ -423,6 +466,15 @@ mod tests {
         assert!(!tmp.join("x.h").exists());
         assert!(!tmp.parent().unwrap().parent().unwrap().join("evil.dll").exists()); // no escaping the folder
         let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn weak_laptops_get_the_small_model() {
+        assert_eq!(cpu_tier(16_000, 12, false), Part::WhisperCpu); // e.g. a Core Ultra 5 with 16 GB
+        assert_eq!(cpu_tier(8_000, 8, false), Part::WhisperSmall); // too little memory
+        assert_eq!(cpu_tier(16_000, 4, false), Part::WhisperSmall); // old dual/quad-core
+        assert_eq!(cpu_tier(8_000, 4, true), Part::WhisperCpu); // already set up with turbo: keep it
+        assert!(PINS.iter().any(|p| p.0 == "Systran/faster-whisper-small/vocabulary.txt"));
     }
 
     #[test]

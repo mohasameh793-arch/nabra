@@ -405,6 +405,12 @@ fn pill_drag(app: AppHandle, on: bool) {
     crate::pill::drag(&app, on);
 }
 
+/// The pill's current view, for a pill page that just (re)loaded.
+#[tauri::command]
+fn pill_state() -> Option<serde_json::Value> {
+    crate::pill::current()
+}
+
 #[tauri::command]
 fn pill_dismiss(state: State<App>) {
     state.tell(Control::Dismiss);
@@ -483,6 +489,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         pill_mic,
         pill_dismiss,
         pill_notes,
+        pill_state,
         open_hub,
         hide_hub
     ]

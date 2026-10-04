@@ -10,7 +10,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetWindowLongPtrW, SetWindowLongPtrW, ShowWindow, GWL_EXSTYLE, SW_SHOWNOACTIVATE, WS_EX_NOACTIVATE,
+    GetWindowLongPtrW, IsWindowVisible, SetWindowLongPtrW, ShowWindow, GWL_EXSTYLE, SW_SHOWNOACTIVATE, WS_EX_NOACTIVATE,
     WS_EX_TOOLWINDOW,
 };
 
@@ -61,7 +61,8 @@ const BOTTOM_MARGIN: f64 = 10.0;
 /// The size of the last view shown, so the window can move (monitor change, docking) without re-rendering.
 static LAST: Mutex<Option<serde_json::Value>> = Mutex::new(None);
 static SIZE: Mutex<(f64, f64)> = Mutex::new((24.0, 64.0));
-static MONITOR: Mutex<Option<(i32, i32)>> = Mutex::new(None);
+/// The work area (x, y, w, h) the pill was last docked in.
+static MONITOR: Mutex<Option<(i32, i32, i32, i32)>> = Mutex::new(None);
 static DRAGGING: AtomicBool = AtomicBool::new(false);
 
 fn hwnd(app: &AppHandle) -> Option<HWND> {
@@ -69,14 +70,31 @@ fn hwnd(app: &AppHandle) -> Option<HWND> {
 }
 
 pub fn init(app: &AppHandle) {
-    if let Some(h) = hwnd(app) {
-        unsafe {
-            let style = GetWindowLongPtrW(h, GWL_EXSTYLE) | (WS_EX_NOACTIVATE.0 | WS_EX_TOOLWINDOW.0) as isize;
-            SetWindowLongPtrW(h, GWL_EXSTYLE, style);
-            let _ = ShowWindow(h, SW_SHOWNOACTIVATE); // Tauri's show() would activate (steal focus)
+    let Some(h) = hwnd(app) else {
+        return crate::log("pill: no window (the WebView2 runtime may be missing or broken)");
+    };
+    unsafe {
+        let style = GetWindowLongPtrW(h, GWL_EXSTYLE) | (WS_EX_NOACTIVATE.0 | WS_EX_TOOLWINDOW.0) as isize;
+        SetWindowLongPtrW(h, GWL_EXSTYLE, style);
+    }
+    let (lw, lh) = *SIZE.lock().unwrap();
+    place(app, lw, lh); // at its dock right away, not wherever Windows put the window
+    reveal(h);
+    follow_mouse(app.clone());
+}
+
+/// Shows the pill without activating it (Tauri's show() would steal focus).
+fn reveal(h: HWND) {
+    unsafe {
+        if !IsWindowVisible(h).as_bool() {
+            let _ = ShowWindow(h, SW_SHOWNOACTIVATE);
         }
     }
-    follow_mouse(app.clone());
+}
+
+/// The view the pill shows now (for a pill page that just loaded).
+pub fn current() -> Option<serde_json::Value> {
+    LAST.lock().unwrap().clone()
 }
 
 fn dock(app: &AppHandle) -> String {
@@ -104,7 +122,7 @@ fn place(app: &AppHandle, lw: f64, lh: f64) {
     let _ = w.set_size(LogicalSize::new(lw, lh));
     let _ = w.set_position(PhysicalPosition::new(x, y));
     *SIZE.lock().unwrap() = (lw, lh);
-    *MONITOR.lock().unwrap() = Some((m.position().x, m.position().y));
+    *MONITOR.lock().unwrap() = Some((ax, ay, aw, ah));
 }
 
 fn payload(app: &AppHandle, view: &View) -> serde_json::Value {
@@ -137,10 +155,17 @@ fn follow_mouse(app: AppHandle) {
             continue;
         }
         let Some(m) = monitor(&app) else { continue };
-        let here = Some((m.position().x, m.position().y));
+        // Re-dock when the mouse changes screen, or this screen's usable area changed (resolution, scaling,
+        // taskbar, a monitor unplugged), which would otherwise leave the pill off-screen.
+        let a = m.work_area();
+        let here = Some((a.position.x, a.position.y, a.size.width as i32, a.size.height as i32));
         if *MONITOR.lock().unwrap() != here {
             let (lw, lh) = *SIZE.lock().unwrap();
             place(&app, lw, lh);
+        }
+        // Something (Explorer restarting, a display change) can hide the window: bring it back.
+        if let Some(h) = hwnd(&app) {
+            reveal(h);
         }
     });
 }

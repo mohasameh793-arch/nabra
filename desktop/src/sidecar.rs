@@ -19,6 +19,8 @@ use windows::Win32::System::JobObjects::{
 const ENGINE: &str = "http://127.0.0.1:8770";
 const LLM_PORT: u16 = 8771;
 const NO_WINDOW: u32 = 0x0800_0000;
+/// Without a GPU the engine works the processor hard: keep the PC responsive by letting other apps go first.
+const BELOW_NORMAL_PRIORITY: u32 = 0x0000_4000;
 
 /// A secret made fresh at every launch and given only to our own engine and llama-server (environment /
 /// --api-key). Every request carries it, so no other program or web page can use them, and the engine proves
@@ -102,7 +104,7 @@ fn job() -> Result<HANDLE, String> {
     }
 }
 
-fn launch(job: HANDLE, exe: &Path, args: &[String], cwd: &Path, log: &Path) -> Result<(), String> {
+fn launch(job: HANDLE, exe: &Path, args: &[String], cwd: &Path, log: &Path, flags: u32) -> Result<(), String> {
     let out = std::fs::File::create(log).map_err(|e| e.to_string())?;
     let child = Command::new(exe)
         .args(args)
@@ -113,7 +115,7 @@ fn launch(job: HANDLE, exe: &Path, args: &[String], cwd: &Path, log: &Path) -> R
         .stdin(Stdio::null())
         .stdout(out.try_clone().map_err(|e| e.to_string())?)
         .stderr(out)
-        .creation_flags(NO_WINDOW)
+        .creation_flags(NO_WINDOW | flags)
         .spawn()
         .map_err(|e| format!("Couldn't start {}: {e}", exe.display()))?;
     unsafe { AssignProcessToJobObject(job, HANDLE(child.as_raw_handle())) }.map_err(|e| e.to_string())?;
@@ -142,11 +144,14 @@ pub fn start(app: &tauri::AppHandle, opts: Launch) -> Result<(), String> {
         "--snippets".into(),
         opts.snippets.display().to_string(),
     ]);
-    // Speech model chosen by first-run setup: large-v3 on an NVIDIA GPU, large-v3-turbo on CPU.
+    // Speech model chosen by first-run setup: large-v3 on an NVIDIA GPU, turbo on a strong processor, small on a
+    // weak laptop.
     if Part::WhisperGpu.installed() {
         args.extend(["--whisper".into(), assets::whisper_gpu().display().to_string()]);
     } else if Part::WhisperCpu.installed() {
         args.extend(["--whisper".into(), assets::whisper_cpu().display().to_string()]);
+    } else if Part::WhisperSmall.installed() {
+        args.extend(["--whisper".into(), assets::whisper_small().display().to_string()]);
     }
     if Part::Cuda.installed() {
         args.extend(["--cuda-dir".into(), assets::cuda().display().to_string()]);
@@ -155,7 +160,7 @@ pub fn start(app: &tauri::AppHandle, opts: Launch) -> Result<(), String> {
         let llm = ["-m", &assets::qwen().display().to_string(), "-ngl", "99", "-c", "8192", "--host", "127.0.0.1",
             "--port", &LLM_PORT.to_string(), "--jinja", "--api-key", token()];
         let llama = assets::llama_server();
-        launch(job, &llama, &llm.map(String::from), llama.parent().unwrap(), &logs.join("llama.log"))?;
+        launch(job, &llama, &llm.map(String::from), llama.parent().unwrap(), &logs.join("llama.log"), 0)?;
         args.extend(["--llm-url".into(), format!("http://127.0.0.1:{LLM_PORT}")]);
     }
     if opts.keep_clips {
@@ -163,7 +168,8 @@ pub fn start(app: &tauri::AppHandle, opts: Launch) -> Result<(), String> {
     }
     // Downloaded in the background on first run (see assets::ensure_voice_model); loaded on first use.
     args.extend(["--voice-model".into(), assets::voice_model().display().to_string()]);
-    launch(job, &program, &args, &cwd, &logs.join("engine.log"))
+    let flags = if Part::WhisperGpu.installed() { 0 } else { BELOW_NORMAL_PRIORITY };
+    launch(job, &program, &args, &cwd, &logs.join("engine.log"), flags)
 }
 
 #[derive(Clone, Debug, Deserialize, serde::Serialize)]

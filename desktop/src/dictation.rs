@@ -422,7 +422,13 @@ impl Controller {
             }
         }
         self.render(View::Working { label: "Starting Nabra…".into() });
-        match self.start_engine() {
+        crate::log("starting the speech engine");
+        let started = self.start_engine();
+        crate::log(match &started {
+            Ok(h) => format!("engine ready (device={}, llm={})", h.device, h.llm),
+            Err(e) => format!("engine failed: {e}"),
+        });
+        match started {
             Ok(health) => {
                 let gpu = if health.device == "cuda" { "GPU" } else { "CPU" };
                 let updated = self.state().updated_to.lock().unwrap().take();

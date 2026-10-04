@@ -194,4 +194,5 @@ $("stop").addEventListener("click", () => invoke($("stop").dataset.action === "n
 $("mic").addEventListener("dblclick", unlessDragged(() => invoke("open_hub", { page: null })));
 
 window.__TAURI__.event.listen("pill", (e) => render(e.payload));
-render({ view: "idle" });
+// Views sent before this page finished loading (e.g. "Starting Nabra…") were missed: ask for the current one.
+invoke("pill_state").then((v) => render(v || { view: "idle" })).catch(() => render({ view: "idle" }));

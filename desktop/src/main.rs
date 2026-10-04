@@ -207,10 +207,28 @@ fn already_running() -> bool {
     }
 }
 
+/// Appends a line to logs\nabra.log: startup steps and crashes, so "nothing happened" can be diagnosed.
+/// (The engine and the local AI model write their own logs next to it.)
+pub fn log(msg: impl AsRef<str>) {
+    use std::io::Write;
+    let dir = sidecar::logs_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("nabra.log");
+    if std::fs::metadata(&path).is_ok_and(|m| m.len() > 1_000_000) {
+        let _ = std::fs::rename(&path, dir.join("nabra.old.log"));
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(f, "{} {}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"), msg.as_ref());
+    }
+}
+
 fn main() {
+    std::panic::set_hook(Box::new(|info| log(format!("CRASH: {info}"))));
     if already_running() {
+        log("another Nabra is already running; this one exits");
         return;
     }
+    log(format!("Nabra {} starting", env!("CARGO_PKG_VERSION")));
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(commands::handler())

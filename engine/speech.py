@@ -45,7 +45,9 @@ class Transcriber:
                 log.warning("GPU %s unavailable (%s)", compute, type(err).__name__)
         if self.model is None:
             log.warning("no usable GPU, using CPU")
-            self.model, self.device = WhisperModel(model, device="cpu", compute_type="int8"), "cpu"
+            # More than 4 threads makes Whisper no faster (measured); it only takes the PC away from the user.
+            threads = min(4, os.cpu_count() or 4)
+            self.model, self.device = WhisperModel(model, device="cpu", compute_type="int8", cpu_threads=threads), "cpu"
         # The first decode initializes CUDA kernels and the VAD model (~2–3 s). Pay that now.
         list(self.model.transcribe(np.zeros(SAMPLE_RATE, np.float32), language="en", vad_filter=True)[0])
 
@@ -70,6 +72,8 @@ class Transcriber:
         forced = self.choose_language(audio, allowed)
         arabic_in_play = not allowed or "ar" in allowed
         prompt = (MIXED_EXAMPLE + " " if arabic_in_play else "") + ", ".join(vocabulary) + "."
+        if self.device == "cpu":
+            beam_size = 1  # several times faster on a processor, for a small accuracy cost
         segments, info = self.model.transcribe(
             audio, language=forced, multilingual=forced is None, vad_filter=True, beam_size=beam_size,
             initial_prompt=prompt)
