@@ -33,6 +33,11 @@ _SPELLED = dict(zip("abcdefghijklmnopqrstuvwxyz",
 _ARTICLES = ("وبال", "وال", "بال", "فال", "كال", "لل", "ال")  # longest first
 _PREPOSITIONS = ("و", "ب", "ل", "ف", "ك")
 MIN_FUZZY_KEY = 4
+# English has no ع ح خ sound, so an English term spelled in Arabic letters never contains them: a word with one is
+# Arabic (الاختبارات "the tests" is one edit from "export" by consonants alone). Emphatics are rare in such
+# spellings, so they only allow an exact sound match.
+_NEVER_TRANSLITERATED = set("عحخ")
+_RARELY_TRANSLITERATED = set("صضظط")
 log = logging.getLogger("nabra.lexicon")
 
 
@@ -139,16 +144,18 @@ class Lexicon:
         return next((e for e in self._all if f in e.forms), None)
 
     def _fuzzy(self, span: str) -> Entry | None:
-        if is_latin(span):
+        if is_latin(span) or _NEVER_TRANSLITERATED & set(span):
             return None
         key = phonetic_key(span)
         if len(key) < MIN_FUZZY_KEY:
             return None
+        # Emphatic letters are rare in spelled-out English: such a word must match a term's sound exactly.
+        rare = bool(_RARELY_TRANSLITERATED & set(span))
         best, best_d = None, None
         for e in self._all:
             for k in e.keys:
                 # One edit only when both keys are long: و نكتب ("and we write", nktb) is one edit from MongoDB.
-                budget = 0 if min(len(k), len(key)) <= 4 else 1
+                budget = 0 if rare or min(len(k), len(key)) <= 4 else 1
                 if abs(len(k) - len(key)) > budget:
                     continue
                 d = levenshtein(key, k)
@@ -157,8 +164,9 @@ class Lexicon:
         return best
 
     def _lookup(self, span: str, fuzzy: bool = True) -> tuple[Entry, str] | None:
-        def strip(prefixes):
-            return [(span[len(p):], p + "ـ ") for p in prefixes if span.startswith(p) and len(span) > len(p) + 1]
+        def strip(prefixes):  # only a prefix glued to the word: "و كوبرنيتيس" is و + a word, not وـ Kubernetes
+            return [(span[len(p):], p + "ـ ") for p in prefixes
+                    if span.startswith(p) and len(span) > len(p) + 1 and not span[len(p)].isspace()]
 
         candidates = [(span, "")] + strip(_ARTICLES)
         # One-letter prepositions (ببيثون = بـ Python) are only trusted for exact spellings; fuzzy

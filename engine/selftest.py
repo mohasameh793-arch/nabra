@@ -44,13 +44,16 @@ restores = {
     "أكتب ببيثون": "أكتب بـ Python",               # one-letter preposition, exact spelling
     "ارفع الفايل على جوجل درايف": "ارفع الفايل على Google Drive",  # exact first: fuzzy mustn't swallow على
     "نعمل ريفاكتور ونكتب يونت تستس": "نعمل refactor ونكتب unit tests",
+    "نستخدم دوكر و كوبرنيتيس": "نستخدم Docker و Kubernetes",  # a separate و stays a word, not وـ
+    "هعمل اكسبورت للملف": "هعمل export للملف",
 }
 for src, want in restores.items():
     assert (got := lex.restore(src)) == want, f"{src!r} → {got!r}, want {want!r}"
 # Ordinary Arabic must come out untouched (these all collided with terms in early versions).
 for plain in ["يسعدني إبلاغكم بأن المشروع قد اكتمل", "يرجى مراجعة التقرير المرفق", "وبعدين من غير ما أدفع",
               "نود أن نشكركم على الحضور", "المبلغ الباقي", "رفر بسيط", "شو رأيك",
-              "وش رايك و نكتب الكود بكرة"]:  # و نكتب ("and we write") was one edit from MongoDB
+              "وش رايك و نكتب الكود بكرة",  # و نكتب ("and we write") was one edit from MongoDB
+              "بس محتاجين نخلص الاختبارات الأولى"]:  # الاختبارات ("the tests") was one edit from export
     assert lex.restore(plain) == plain, f"over-correction: {plain!r} → {lex.restore(plain)!r}"
 
 # user dictionary wins and reloads
