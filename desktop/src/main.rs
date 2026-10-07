@@ -222,10 +222,45 @@ pub fn log(msg: impl AsRef<str>) {
     }
 }
 
+/// `nabra.exe --notes` starts or stops call notes in the running Nabra (a shortcut, Stream Deck button or script).
+/// The running copy waits on this named event; a second launch with --notes sets it and exits.
+const NOTES_EVENT: windows::core::PCWSTR = windows::core::w!("Local\\Nabra.ToggleNotes");
+
+fn signal_toggle_notes() {
+    use windows::Win32::System::Threading::{OpenEventW, SetEvent, EVENT_MODIFY_STATE};
+    unsafe {
+        match OpenEventW(EVENT_MODIFY_STATE, false, NOTES_EVENT) {
+            Ok(event) => {
+                let _ = SetEvent(event);
+                let _ = windows::Win32::Foundation::CloseHandle(event);
+            }
+            Err(e) => log(format!("--notes: Nabra isn't listening ({e})")),
+        }
+    }
+}
+
+fn listen_for_toggle_notes(app: AppHandle) {
+    use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject, INFINITE};
+    use windows::Win32::Foundation::WAIT_OBJECT_0;
+    std::thread::spawn(move || unsafe {
+        let Ok(event) = CreateEventW(None, false, false, NOTES_EVENT) else { return };
+        while WaitForSingleObject(event, INFINITE) == WAIT_OBJECT_0 {
+            log("--notes: toggling call notes");
+            if let Err(e) = toggle_meeting(&app) {
+                log(format!("--notes: {e}"));
+            }
+        }
+    });
+}
+
 fn main() {
     std::panic::set_hook(Box::new(|info| log(format!("CRASH: {info}"))));
     if already_running() {
-        log("another Nabra is already running; this one exits");
+        if std::env::args().any(|a| a == "--notes") {
+            signal_toggle_notes();
+        } else {
+            log("another Nabra is already running; this one exits");
+        }
         return;
     }
     log(format!("Nabra {} starting", env!("CARGO_PKG_VERSION")));
@@ -266,6 +301,7 @@ fn main() {
                 offered: Mutex::new(None),
             });
             updater::watch(app.handle().clone());
+            listen_for_toggle_notes(app.handle().clone());
             // Voice model for "who is speaking" in call notes (small; first run or after updating).
             std::thread::spawn(|| {
                 if let Err(e) = assets::ensure_voice_model() {
