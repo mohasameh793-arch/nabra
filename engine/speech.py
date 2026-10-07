@@ -51,6 +51,27 @@ def foreign_script(text: str, allowed: list[str]) -> bool:
     return bool(allowed) and any(rx.search(text) and not langs & set(allowed) for rx, langs in _SCRIPTS)
 
 
+# French/Spanish/German/… written in the same letters as English: Whisper's usual misdetections in an Arabic +
+# English call. Letters English doesn't use, or several of these languages' everyday words.
+_EUROPEAN_LETTERS = re.compile(r"[àâäãåæçèéêëìíîïñòóôõöøùúûüÿœß]", re.I)
+_EUROPEAN_WORDS = set("le les des est une pour dans avec pas vous nous je c'est qui que il elle sont "
+                      "el los las por para con una es muy pero como del ist und nicht ein eine der die das ich wir "
+                      "sie mit auf zu non sono della per che".split())
+_LATIN_LANGS = set("fr es de it pt nl ca ro sv da no pl cs tr cy".split())
+
+
+def foreign_latin(text: str, allowed: list[str]) -> bool:
+    """True if Latin-script text reads like a European language the user didn't pick (only checked when English is
+    the one Latin-script language allowed, so a French or Spanish speaker who picked theirs is never second-guessed)."""
+    if not allowed or "en" not in allowed or _LATIN_LANGS & set(allowed):
+        return False
+    words = [w for w in re.findall(r"[^\W\d_]+(?:'[^\W\d_]+)?", text.lower()) if w.isascii() or _EUROPEAN_LETTERS.search(w)]
+    if not words:
+        return False
+    odd = sum(bool(_EUROPEAN_LETTERS.search(w)) or w in _EUROPEAN_WORDS for w in words)
+    return odd >= 2 and odd / len(words) >= 0.2
+
+
 def is_hallucination(segment: str, prompt: str) -> bool:
     """A segment that is a stock silence phrase, or the prompt (example sentence / vocabulary) echoed back.
     One- or two-word segments may legitimately be a vocabulary term, so only longer echoes count."""
@@ -134,11 +155,13 @@ class Transcriber:
             return text, language or info.language
 
         text, language = run(forced)
-        if text and foreign_script(text, allowed):
+        latin = bool(text) and foreign_latin(text, allowed)
+        drifted = strict and bool(text) and bool(allowed) and language not in allowed  # e.g. Whisper itself said "fr"
+        if text and (foreign_script(text, allowed) or latin or drifted):
             # A language the user doesn't speak came out (per-segment detection can still drift): redo it in the
-            # most likely allowed one.
-            text, language = run(best or allowed[0])
-            if foreign_script(text, allowed):
+            # most likely allowed one; French-looking text was most likely English.
+            text, language = run(best or ("en" if latin and "en" in allowed else allowed[0]))
+            if foreign_script(text, allowed) or foreign_latin(text, allowed):
                 # Whisper keeps writing e.g. Japanese even when told "English": it's not speech in a language the
                 # user speaks (or noise it misheard). Nothing is better than text nobody in the call said.
                 text = ""
