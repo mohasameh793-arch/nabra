@@ -35,6 +35,24 @@ LIST_EXAMPLES = [
 ]
 SENTENCE_END = re.compile(r"(?<=[.?!؟])\s+")
 
+# Items inside one sentence ("I need to finish the report, send the invoice, and call the doctor"): the LLM cuts the
+# text into pieces, and the pieces are only used if they hold exactly the user's words, in order.
+PIECES_RULES = """Split dictated text into a bullet list ONLY if the speaker enumerates 3 or more parallel items (tasks,
+questions, steps, things). Cut the text into pieces, copying the speaker's words exactly, in order, without adding,
+removing or changing any word (you may only drop a joining "and"/"or" before the last item):
+{"intro": text before the items, "items": [each item], "outro": text after the items}
+The intro is the shared start ("Today I need to"), so each item reads on its own ("finish the report").
+If there is no enumeration reply {"items": []}. Reply with JSON only."""
+PIECES_EXAMPLES = [
+    ("For the trip I need to pack the charger, the passport and the tickets, then call the hotel.",
+     '{"intro": "For the trip I need to pack", "items": ["the charger", "the passport", "the tickets"], "outro": "then call the hotel."}'),
+    ("بكرة لازم أخلص الشغل، وأكلم المدير، وأحجز التذاكر.",
+     '{"intro": "بكرة لازم", "items": ["أخلص الشغل،", "وأكلم المدير،", "وأحجز التذاكر."], "outro": ""}'),
+    ("I called him yesterday and we talked about the price and the delivery date.", '{"items": []}'),
+]
+JOINERS = {"and", "or", "و", "او"}  # the only words a list may drop
+BULLET = "• "  # what Wispr Flow types: a real dot, so it reads as a list in chat boxes that don't render "- "
+
 SUMMARY_RULES = """You summarize a call transcript. Lines start with ME (the user), a person's name, or THEM (someone
 else whose name isn't known).
 Write everything in {language}; keep technical terms, products, and names exactly as spoken.
@@ -101,16 +119,26 @@ class Llm:
         """Spoken enumerations become "- " bullet lists (like Wispr Flow). The LLM only picks which sentences
         are items; the text is rebuilt here from the user's own sentences, so no word can change."""
         sentences = SENTENCE_END.split(text.strip())
-        if len(sentences) < 3:
+        if len(sentences) >= 3:
+            messages = [{"role": "system", "content": LIST_RULES}]
+            for numbered, answer in LIST_EXAMPLES:
+                messages += [{"role": "user", "content": numbered}, {"role": "assistant", "content": answer}]
+            numbered = "\n".join(f"{i + 1}. {one_line(s)}" for i, s in enumerate(sentences))
+            reply = self.chat(messages + [{"role": "user", "content": numbered}], max_tokens=40)
+            found = re.search(r"\{.*?\}", reply, re.S)
+            run = json.loads(found[0]) if found else {}
+            listed = as_list(sentences, int(run.get("first", 0)), int(run.get("last", 0)))
+            if "\n" in listed:
+                return listed
+        if len(re.findall(r"[,،]", text)) < 2:
             return text
-        messages = [{"role": "system", "content": LIST_RULES}]
-        for numbered, answer in LIST_EXAMPLES:
-            messages += [{"role": "user", "content": numbered}, {"role": "assistant", "content": answer}]
-        numbered = "\n".join(f"{i + 1}. {one_line(s)}" for i, s in enumerate(sentences))
-        reply = self.chat(messages + [{"role": "user", "content": numbered}], max_tokens=40)
-        found = re.search(r"\{.*?\}", reply, re.S)
-        run = json.loads(found[0]) if found else {}
-        return as_list(sentences, int(run.get("first", 0)), int(run.get("last", 0)))
+        messages = [{"role": "system", "content": PIECES_RULES}]
+        for before, answer in PIECES_EXAMPLES:
+            messages += [{"role": "user", "content": before}, {"role": "assistant", "content": answer}]
+        reply = self.chat(messages + [{"role": "user", "content": one_line(text)}], max_tokens=600)
+        found = re.search(r"\{.*\}", reply, re.S)
+        cut = json.loads(found[0]) if found else {}
+        return from_pieces(text, cut) if isinstance(cut, dict) else text
 
     def summarize(self, lines: list[dict], language: str | None) -> str:
         spoken = [l for l in lines if l.get("text", "").strip()]
@@ -213,9 +241,35 @@ def as_list(sentences: list[str], first: int, last: int) -> str:
         first = 2
     intro = " ".join(sentences[:first - 1])
     lines = [re.sub(r"[.،,]$", "", intro) + ":"] if intro else []
-    lines += [f"- {s}" for s in sentences[first - 1:last]]
+    lines += [BULLET + s for s in sentences[first - 1:last]]
     if rest := " ".join(sentences[last:]):
         lines.append(rest)
+    return "\n".join(lines)
+
+
+def from_pieces(text: str, cut: dict) -> str:
+    """The LLM's {"intro", "items", "outro"} as a bullet list, or `text` unchanged unless the pieces are exactly the
+    user's words in order (only "and"/"or"/"و" before an item may go)."""
+    items = [i.strip() for i in cut.get("items") or [] if isinstance(i, str) and i.strip()]
+    intro, outro = (str(cut.get(k) or "").strip() for k in ("intro", "outro"))
+    if len(items) < 3:
+        return text
+    got, i = fold(" ".join([intro, *items, outro])).split(), 0
+    for word in fold(text).split():
+        if i < len(got) and got[i] == word:
+            i += 1
+        elif word not in JOINERS:
+            return text
+    if i != len(got):
+        return text
+
+    def cap(s: str) -> str:
+        return s[0].upper() + s[1:] if s[:1].isascii() else s
+
+    lines = [re.sub(r"[\s.,،:]+$", "", intro) + ":"] if intro else []
+    lines += [BULLET + cap(re.sub(r"^(and|or)\s+", "", re.sub(r"[,،]$", "", item))) for item in items]
+    if re.search(r"\w", outro):  # an outro of just "." is the list's own full stop
+        lines.append(cap(outro))
     return "\n".join(lines)
 
 
