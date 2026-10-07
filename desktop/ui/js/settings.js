@@ -63,7 +63,10 @@ async function body() {
             if (!langs.length) return toast("Keep at least one language");
             await save({ languages: langs }, `Listening for ${langs.map(languageName).join(", ")}`);
             draw();
-          } }, en, en !== native ? h("small", {}, native) : null)))];
+          } }, en, en !== native ? h("small", {}, native) : null))),
+        field("Arabic dialect", "Pick yours so Nabra keeps your dialect's words. Auto works for everyone; the pill shows the dialect it heard.",
+          h("div", { class: "seg" }, [["auto", "Auto"], ["gulf", "Gulf"], ["egyptian", "Egyptian"], ["levantine", "Levantine"], ["msa", "MSA"]].map(([v, name]) =>
+            h("button", { "aria-pressed": String((s.dialect || "auto") === v), onclick: async () => { await save({ dialect: v }, `Dialect: ${name}`); draw(); } }, name))))];
     case "notes": {
       const sel = languageSelect(s.summary_language, "Same as the call");
       sel.addEventListener("change", () => save({ summary_language: sel.value || null }, "Summary language saved"));

@@ -23,7 +23,8 @@ use crate::App;
 pub enum View {
     Idle,
     /// Mouse over the capsule: mic + notes buttons with shortcut tooltips.
-    Hover { notes_on: bool, talk_key: &'static str, notes_key: &'static str },
+    /// `dialect`: the Arabic dialect of the last dictation ("Gulf"…), shown as a small badge; "" = none yet.
+    Hover { notes_on: bool, talk_key: &'static str, notes_key: &'static str, dialect: &'static str },
     Notes { seconds: u64 },
     /// The capsule with a live voice meter. `command`: Right Alt is held (an instruction, not text).
     Listening { seconds: f32, level: f32, hands_free: bool, command: bool },
@@ -36,6 +37,8 @@ pub enum View {
     Meeting { title: String },
     /// A new version is ready: offer to update.
     Update { version: String },
+    /// Autotune: dictation is slow on this PC: offer the light speech model.
+    Slow,
     /// A card with an answer: what was playing, a catch-up, or an answer from past calls (`note` + `t` = Open).
     Reveal { title: String, text: String, note: Option<String>, t: f32 },
 }
@@ -49,7 +52,9 @@ impl View {
             View::Hover { .. } => return if dock == "bottom" { (300.0, 190.0) } else { (330.0, 210.0) },
             View::Notes { .. } => return (170.0, 64.0),
             View::Working { .. } => return (300.0, 64.0),
-            View::Result { .. } | View::Problem { .. } | View::Meeting { .. } | View::Update { .. } => return (420.0, 84.0),
+            View::Result { .. } | View::Problem { .. } | View::Meeting { .. } | View::Update { .. } | View::Slow => {
+                return (420.0, 84.0)
+            }
             View::Reveal { .. } => return (420.0, 260.0),
         };
         if dock == "bottom" { (h, w) } else { (w, h) } // the capsule lies down at the bottom
@@ -256,12 +261,12 @@ fn snap(app: &AppHandle) {
 /// Window size for an already-rendered payload (used after re-docking).
 fn size_of_payload(v: &serde_json::Value, dock: &str) -> (f64, f64) {
     let view = match v["view"].as_str().unwrap_or("idle") {
-        "hover" => View::Hover { notes_on: false, talk_key: "", notes_key: "" },
+        "hover" => View::Hover { notes_on: false, talk_key: "", notes_key: "", dialect: "" },
         "listening" => View::Listening { seconds: 0.0, level: 0.0, hands_free: false, command: false },
         "busy" => View::Busy,
         "notes" => View::Notes { seconds: 0 },
         "working" => View::Working { label: String::new() },
-        "result" | "problem" | "meeting" | "update" => View::Problem { message: String::new() },
+        "result" | "problem" | "meeting" | "update" | "slow" =>View::Problem { message: String::new() },
         "reveal" => View::Reveal { title: String::new(), text: String::new(), note: None, t: 0.0 },
         _ => View::Idle,
     };

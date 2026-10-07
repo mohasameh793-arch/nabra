@@ -220,9 +220,18 @@ pub fn plan() -> (Option<u64>, Vec<Part>) {
             }
             p
         }
+        _ if prefers_light() => vec![Part::WhisperSmall],
         _ => vec![cpu_tier(ram_mb(), threads(), Part::WhisperCpu.installed())],
     };
     (g.map(|g| g.0), parts)
+}
+
+/// Set when the user accepts the light model after Nabra measured turbo as too slow on this PC (dictation.rs).
+pub fn light_marker() -> PathBuf {
+    dir().join("whisper").join("use-small")
+}
+pub fn prefers_light() -> bool {
+    light_marker().exists()
 }
 
 /// Dictation can start: the speech parts are in (the local AI model may still be downloading).

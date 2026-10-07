@@ -201,6 +201,20 @@ fn mcp_setup(app: AppHandle, state: State<App>) -> Res<Value> {
 static SETTING_UP: AtomicBool = AtomicBool::new(false);
 
 /// What this PC needs to download, and what's already there.
+/// Autotune's offer on the pill: download the light speech model (490 MB) and switch to it.
+#[tauri::command]
+async fn use_light_model(app: AppHandle) -> Res<()> {
+    let marker = assets::light_marker();
+    std::fs::write(&marker, b"").map_err(|e| e.to_string())?;
+    app.state::<App>().tell(Control::Updating("Downloading the light model (490 MB)…".into()));
+    let result = setup_run(app.clone()).await; // the plan now says small; it tells the pill to restart the engine
+    if let Err(e) = &result {
+        let _ = std::fs::remove_file(&marker); // stay on turbo rather than leave setup half-done
+        app.state::<App>().tell(Control::UpdateFailed(format!("Couldn't get the light model: {e}")));
+    }
+    result
+}
+
 #[tauri::command]
 fn setup_status() -> Value {
     let (vram, parts) = assets::plan();
@@ -452,6 +466,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         microphones,
         check_updates,
         install_update,
+        use_light_model,
         note_speakers,
         catch_up,
         name_speaker,

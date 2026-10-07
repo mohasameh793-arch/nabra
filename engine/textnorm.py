@@ -41,3 +41,22 @@ def is_arabic(token: str) -> bool:
 
 def is_latin(token: str) -> bool:
     return bool(LATIN.search(token))
+
+
+# Words only one dialect uses (folded spelling). MSA has no markers: it is never guessed, only chosen.
+_DIALECT_WORDS = {
+    # Left out on purpose: shared or ambiguous words (ليش, هلا, زين, ايه = "what"/"yes", ابي = "I want"/"my father").
+    "gulf": {"وش", "ابغي", "ابغا", "تبي", "شلون", "وايد", "الحين", "يبي", "عساك", "هالحين", "شفيك"},
+    "egyptian": {"عايز", "عاوز", "عايزه", "ازاي", "دلوقتي", "كده", "اوي", "بتاع", "بتاعي", "امبارح", "النهارده"},
+    "levantine": {"بدي", "بدك", "شو", "هلق", "كتير", "منيح", "هيك", "مشان", "لكان", "هون"},
+}
+
+
+def dialect_of(text: str) -> str | None:
+    """The Arabic dialect whose marker words appear most ("gulf" / "egyptian" / "levantine"), or None.
+    ponytail: word lists, not a model; a short or neutral sentence gives None, and that's fine for a badge."""
+    tokens = fold(text).split()
+    tokens += [t[1:] for t in tokens if len(t) > 3 and t[0] in "وف"]  # وعايز → عايز
+    hits = {d: sum(t in words for t in tokens) for d, words in _DIALECT_WORDS.items()}
+    best = max(hits, key=hits.get)
+    return best if hits[best] and list(hits.values()).count(hits[best]) == 1 else None

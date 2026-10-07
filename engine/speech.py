@@ -13,7 +13,14 @@ log = logging.getLogger("nabra.speech")
 
 SAMPLE_RATE = 16_000
 # A code-switched example in the prompt keeps English words in Latin script (benchmark: 10% → 55%).
-MIXED_EXAMPLE = "طيب خلنا نسوي deploy للـ app على Vercel وبعدين push على GitHub."
+# The dialect lock swaps it for one in the user's dialect, which nudges Whisper toward that dialect's words.
+MIXED_EXAMPLES = {
+    "gulf": "طيب خلنا نسوي deploy للـ app على Vercel وبعدين push على GitHub.",
+    "egyptian": "طب يلا نعمل deploy للـ app على Vercel وبعد كده نعمل push على GitHub.",
+    "levantine": "طيب خلينا نعمل deploy للـ app على Vercel وبعدين push على GitHub هلق.",
+    "msa": "حسناً، لنقم بعمل deploy للـ app على Vercel ثم push على GitHub.",
+}
+MIXED_EXAMPLE = MIXED_EXAMPLES["gulf"]
 # Below this, detection is a guess (Gulf Arabic → "Persian"); above it the speaker really is using
 # that language, and forcing another one would make Whisper TRANSLATE instead of transcribe.
 CONFIDENT_DETECTION = 0.8
@@ -78,7 +85,8 @@ class Transcriber:
         in_list = [(code, p) for code, p in ranked if code in allowed]
         return max(in_list, key=lambda x: x[1])[0] if in_list else allowed[0]
 
-    def transcribe(self, wav: bytes, allowed: list[str], vocabulary: list[str], beam_size: int = 5) -> tuple[str, str | None]:
+    def transcribe(self, wav: bytes, allowed: list[str], vocabulary: list[str], beam_size: int = 5,
+                   dialect: str = "auto") -> tuple[str, str | None]:
         """Returns (text, language). beam_size=1 is the fast pass for live (still-speaking) call text."""
         from faster_whisper import decode_audio
 
@@ -87,7 +95,7 @@ class Transcriber:
             return "", None
         forced = self.choose_language(audio, allowed)
         arabic_in_play = not allowed or "ar" in allowed
-        prompt = (MIXED_EXAMPLE + " " if arabic_in_play else "") + ", ".join(vocabulary) + "."
+        prompt = (MIXED_EXAMPLES.get(dialect, MIXED_EXAMPLE) + " " if arabic_in_play else "") + ", ".join(vocabulary) + "."
         if self.device == "cpu":
             beam_size = 1  # several times faster on a processor, for a small accuracy cost
         segments, info = self.model.transcribe(

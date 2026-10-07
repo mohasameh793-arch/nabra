@@ -195,13 +195,14 @@ pub fn start(app: &tauri::AppHandle, opts: Launch) -> Result<(), String> {
         opts.snippets.display().to_string(),
     ]);
     // Speech model chosen by first-run setup: large-v3 on an NVIDIA GPU, turbo on a strong processor, small on a
-    // weak laptop.
+    // weak laptop, or when Nabra measured turbo as too slow here and the user switched to the light model.
+    let small = Part::WhisperSmall.installed() && (assets::prefers_light() || !Part::WhisperCpu.installed());
     if Part::WhisperGpu.installed() {
         args.extend(["--whisper".into(), assets::whisper_gpu().display().to_string()]);
+    } else if small {
+        args.extend(["--whisper".into(), assets::whisper_small().display().to_string()]);
     } else if Part::WhisperCpu.installed() {
         args.extend(["--whisper".into(), assets::whisper_cpu().display().to_string()]);
-    } else if Part::WhisperSmall.installed() {
-        args.extend(["--whisper".into(), assets::whisper_small().display().to_string()]);
     }
     if Part::Cuda.installed() {
         args.extend(["--cuda-dir".into(), assets::cuda().display().to_string()]);
@@ -297,13 +298,16 @@ fn explain(e: ureq::Error) -> String {
 pub struct Dictated {
     pub text: String,
     pub language: Option<String>,
+    /// The Arabic dialect heard (or locked), for the pill's badge.
+    #[serde(default)]
+    pub dialect: Option<String>,
     #[serde(default)]
     pub fixes: crate::store::Fixes,
 }
 
 /// `langs`, `mode` and `style` come from validated settings (ASCII words, commas, underscores only).
-pub fn dictate(wav: &[u8], langs: &str, mode: &str, style: &str) -> Result<Dictated, String> {
-    post(&format!("/dictate?langs={langs}&mode={mode}&style={style}"))
+pub fn dictate(wav: &[u8], langs: &str, mode: &str, style: &str, dialect: &str) -> Result<Dictated, String> {
+    post(&format!("/dictate?langs={langs}&mode={mode}&style={style}&dialect={dialect}"))
         .timeout(Duration::from_secs(120))
         .send_bytes(wav)
         .map_err(explain)?

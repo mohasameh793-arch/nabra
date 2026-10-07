@@ -1,7 +1,8 @@
 """The engine's loopback HTTP API, used by the desktop app.
 
 GET  /health                                → {"device": "cuda", "llm": true}
-POST /dictate?langs=ar,en&mode=clean|raw&style=formal|casual|very_casual   WAV → {"text", "raw", "language", "fixes", "ms"}
+POST /dictate?langs=ar,en&mode=clean|raw&style=formal|casual|very_casual&dialect=auto|gulf|egyptian|levantine|msa
+                                                 WAV → {"text", "raw", "language", "dialect", "fixes", "ms"}
 POST /instruction?langs=ar,en                WAV body → {"instruction", "action"}   (Right Alt voice commands)
 POST /transform {"text", "instruction"}      → {"text"}  (user-requested rewrite / translation)
 POST /note?langs=ar,en[&partial=1]         WAV body → {"text", "language"}      (calls: no LLM, never stored)
@@ -32,7 +33,10 @@ import httpx
 from lexicon import Lexicon
 from polish import Llm, changed_words, check_edit
 from shortcuts import STYLES, Snippets, apply_style, classify, spoken_breaks
-from speech import Transcriber
+from speech import MIXED_EXAMPLES, Transcriber
+from textnorm import dialect_of, is_arabic
+
+DIALECTS = set(MIXED_EXAMPLES)  # the dialect lock's choices besides "auto"
 from voices import Voices
 
 log = logging.getLogger("nabra.service")
@@ -50,17 +54,17 @@ class Engine:
         self.clips_lock = Lock()
         self.voices = Voices(voice_model)
 
-    def dictate(self, wav: bytes, langs: list[str], mode: str, style: str = "formal") -> dict:
+    def dictate(self, wav: bytes, langs: list[str], mode: str, style: str = "formal", dialect: str = "auto") -> dict:
         t0 = time.perf_counter()
         vocab = self.lexicon.prompt_terms()
         with self.gpu:
-            raw, language = self.speech.transcribe(wav, langs, vocab)
+            raw, language = self.speech.transcribe(wav, langs, vocab, dialect=dialect)
         text, fixes = raw, {"terms": 0, "dictionary": 0, "ai": 0, "snippets": 0}
         if raw and mode != "raw":
             text, fixes["terms"], fixes["dictionary"] = self.lexicon.restore_counted(raw)
             if self.llm:
                 try:
-                    cleaned = self.llm.cleanup(text, vocab)
+                    cleaned = self.llm.cleanup(text, vocab, dialect)
                     if (reason := check_edit(text, cleaned)) is None:
                         fixes["ai"] = changed_words(text, cleaned)
                         text = cleaned
@@ -78,7 +82,8 @@ class Engine:
             text, fixes["snippets"] = self.snippets.expand(text)
             if not fixes["snippets"]:  # a snippet is inserted exactly as saved
                 text = apply_style(text, style if style in STYLES else "formal")
-        result = {"text": text, "raw": raw, "language": language, "fixes": fixes,
+        heard = (dialect if dialect in DIALECTS else dialect_of(text)) if is_arabic(text) else None
+        result = {"text": text, "raw": raw, "language": language, "dialect": heard, "fixes": fixes,
                   "ms": round((time.perf_counter() - t0) * 1000)}
         if self.keep_clips and text:
             self._keep(wav, result)
@@ -193,7 +198,9 @@ def handler_for(engine: Engine):
                     return self.reply(400, {"error": "bad request"})
             try:
                 if url.path == "/dictate":
-                    self.reply(200, engine.dictate(body, langs, q.get("mode", ["clean"])[0], q.get("style", ["formal"])[0]))
+                    dialect = q.get("dialect", ["auto"])[0]
+                    self.reply(200, engine.dictate(body, langs, q.get("mode", ["clean"])[0], q.get("style", ["formal"])[0],
+                                                   dialect if dialect in DIALECTS else "auto"))
                 elif url.path == "/instruction":
                     self.reply(200, engine.instruction(body, langs))
                 elif url.path == "/transform":

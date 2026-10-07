@@ -56,6 +56,8 @@ body[data-view="hover"] .stack { display: flex; animation: pop 140ms ease-out; }
 }
 .tip.show { opacity: 1; transform: translate(0, -50%); }
 .tip b { font-weight: 700; }
+.badge { margin-left: 4px; padding: 1px 6px; border-radius: 999px; background: rgba(255, 255, 255, 0.14); color: var(--muted); font-size: 10.5px; font-weight: 600; }
+.badge[hidden] { display: none; }
 body.panel-open .tip { display: none; }
 
 /* upcoming meetings card */

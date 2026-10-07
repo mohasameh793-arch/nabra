@@ -56,6 +56,8 @@ LANGUAGE_NAMES = {"ar": "Arabic", "en": "English", "fr": "French", "es": "Spanis
                   "ja": "Japanese", "tr": "Turkish", "ur": "Urdu", "hi": "Hindi", "fa": "Persian",
                   "zh": "Chinese", "ko": "Korean", "ru": "Russian", "pt": "Portuguese", "it": "Italian",
                   "id": "Indonesian"}
+DIALECT_NAMES = {"gulf": "Gulf Arabic", "egyptian": "Egyptian Arabic", "levantine": "Levantine Arabic",
+                 "msa": "Modern Standard Arabic (فصحى)"}
 PART_CHARS = 6000  # transcript characters per summary request (fits an 8k context with room to answer)
 
 
@@ -85,8 +87,11 @@ class Llm:
         text = re.sub(r"<think>.*?</think>", "", choice["message"]["content"], flags=re.S)
         return re.sub(r"<think>.*", "", text, flags=re.S).strip()  # reasoning cut off before </think>: drop it
 
-    def cleanup(self, text: str, vocabulary: list[str]) -> str:
-        messages = [{"role": "system", "content": f"{CLEANUP_RULES}\nPreferred spellings: {', '.join(vocabulary)}"}]
+    def cleanup(self, text: str, vocabulary: list[str], dialect: str = "auto") -> str:
+        system = f"{CLEANUP_RULES}\nPreferred spellings: {', '.join(vocabulary)}"
+        if name := DIALECT_NAMES.get(dialect):
+            system += f"\nThe speaker uses {name}: keep its words and spelling, never change them to another dialect."
+        messages = [{"role": "system", "content": system}]
         for before, after in CLEANUP_EXAMPLES:
             messages += [{"role": "user", "content": before}, {"role": "assistant", "content": after}]
         messages.append({"role": "user", "content": text})

@@ -147,7 +147,8 @@ class Lexicon:
         best, best_d = None, None
         for e in self._all:
             for k in e.keys:
-                budget = 0 if len(k) <= 4 else 1
+                # One edit only when both keys are long: و نكتب ("and we write", nktb) is one edit from MongoDB.
+                budget = 0 if min(len(k), len(key)) <= 4 else 1
                 if abs(len(k) - len(key)) > budget:
                     continue
                 d = levenshtein(key, k)
@@ -155,14 +156,14 @@ class Lexicon:
                     best, best_d = e, d
         return best
 
-    def _lookup(self, span: str) -> tuple[Entry, str] | None:
+    def _lookup(self, span: str, fuzzy: bool = True) -> tuple[Entry, str] | None:
         def strip(prefixes):
             return [(span[len(p):], p + "ـ ") for p in prefixes if span.startswith(p) and len(span) > len(p) + 1]
 
         candidates = [(span, "")] + strip(_ARTICLES)
         # One-letter prepositions (ببيثون = بـ Python) are only trusted for exact spellings; fuzzy
         # matching with them stripped would chew through ordinary words starting with و/ب/ل.
-        passes = [(self._exact, candidates + strip(_PREPOSITIONS)), (self._fuzzy, candidates)]
+        passes = [(self._exact, candidates + strip(_PREPOSITIONS))] + ([(self._fuzzy, candidates)] if fuzzy else [])
         for matcher, cands in passes:
             for text, prefix in cands:
                 if (e := matcher(text)) is not None:
@@ -173,8 +174,15 @@ class Lexicon:
         return self.restore_counted(text, max_span)[0]
 
     def restore_counted(self, text: str, max_span: int = 4) -> tuple[str, int, int]:
-        """Returns (text, built-in term fixes, personal dictionary fixes). Casing-only fixes don't count."""
+        """Returns (text, built-in term fixes, personal dictionary fixes). Casing-only fixes don't count.
+        Exact spellings go first over the whole text, then fuzzy: otherwise a fuzzy span starting one word
+        early swallows it (على جوجل درايف → Google Drive, losing على)."""
         self._reload_user()
+        text, built, user = self._restore_pass(text, max_span, fuzzy=False)
+        text, built2, user2 = self._restore_pass(text, max_span, fuzzy=True)
+        return text, built + built2, user + user2
+
+    def _restore_pass(self, text: str, max_span: int, fuzzy: bool) -> tuple[str, int, int]:
         user_terms = {e.term for e in self._user}
         fixes = {"builtin": 0, "user": 0}
 
@@ -199,7 +207,7 @@ class Lexicon:
                         i += n
                         break
                     continue
-                found = self._lookup(span)
+                found = self._lookup(span, fuzzy)
                 if found:
                     entry, prefix = found
                     count(entry)

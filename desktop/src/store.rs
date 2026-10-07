@@ -84,12 +84,16 @@ fn read_json<T: for<'de> Deserialize<'de> + Default>(path: &Path) -> T {
 
 // --- settings -------------------------------------------------------------------------------
 
+pub const DIALECTS: [&str; 5] = ["auto", "gulf", "egyptian", "levantine", "msa"];
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub name: String,
     /// Languages the user speaks (ISO 639-1). The engine only picks among these.
     pub languages: Vec<String>,
+    /// Arabic dialect lock: "auto" | "gulf" | "egyptian" | "levantine" | "msa" (steers recognition and cleanup).
+    pub dialect: String,
     /// Call summary language; None = the call's main language.
     pub summary_language: Option<String>,
     /// "clean" (lexicon + AI cleanup) or "raw" (speech-to-text only).
@@ -148,6 +152,7 @@ impl Default for Settings {
         Self {
             name: std::env::var("USERNAME").unwrap_or_default(),
             languages: vec!["ar".into(), "en".into()],
+            dialect: "auto".into(),
             summary_language: None,
             mode: "clean".into(),
             microphone: None,
@@ -175,6 +180,9 @@ impl Settings {
         }
         if self.mode != "clean" && self.mode != "raw" {
             return Err("Unknown mode".into());
+        }
+        if !DIALECTS.contains(&self.dialect.as_str()) {
+            return Err("Unknown dialect".into());
         }
         let s = &self.styles;
         if ![&s.personal, &s.work, &s.email, &s.other].iter().all(|v| ["formal", "casual", "very_casual"].contains(&v.as_str())) {
@@ -204,6 +212,9 @@ impl Settings {
         }
         if !["right", "left", "bottom"].contains(&self.pill_dock.as_str()) {
             self.pill_dock = d.pill_dock;
+        }
+        if !DIALECTS.contains(&self.dialect.as_str()) {
+            self.dialect = d.dialect; // settings saved before the dialect lock existed have ""
         }
         self
     }

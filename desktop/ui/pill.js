@@ -36,6 +36,8 @@ function render(v) {
   switch (v.view) {
     case "hover":
       $("key-talk").textContent = v.talk_key;
+      $("dialect").textContent = v.dialect;
+      $("dialect").hidden = !v.dialect;
       $("key-notes").textContent = v.notes_key;
       $("notes").classList.toggle("on", v.notes_on);
       $("notes-label").textContent = v.notes_on ? "Stop notes" : "Start notes";
@@ -77,6 +79,13 @@ function render(v) {
       $("msg").textContent = `Nabra ${v.version} is available`;
       $("take").textContent = "Update";
       $("take").dataset.action = "update";
+      $("take").hidden = false;
+      $("dismiss").hidden = false;
+      break;
+    case "slow":
+      $("msg").textContent = "Dictation is slow on this PC. The light model is about 3× faster.";
+      $("take").textContent = "Use light model";
+      $("take").dataset.action = "light";
       $("take").hidden = false;
       $("dismiss").hidden = false;
       break;
@@ -179,7 +188,8 @@ $("chev").addEventListener("click", async () => {
   $("chev").classList.add("open");
   document.body.classList.add("panel-open");
 });
-$("take").addEventListener("click", () => invoke($("take").dataset.action === "update" ? "install_update" : "pill_notes").catch(() => {}));
+const TAKE_COMMANDS = { update: "install_update", light: "use_light_model", notes: "pill_notes" };
+$("take").addEventListener("click", () => invoke(TAKE_COMMANDS[$("take").dataset.action] || "pill_notes").catch(() => {}));
 $("dismiss").addEventListener("click", () => invoke("pill_dismiss"));
 $("reveal-close").addEventListener("click", () => invoke("pill_dismiss"));
 $("reveal-copy").addEventListener("click", async () => {

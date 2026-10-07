@@ -89,11 +89,42 @@ pub struct Controller {
     engine_error: Option<String>,
     /// Prompts that arrived mid-dictation, shown once it ends (never silently dropped).
     deferred: Vec<Control>,
+    /// Dictations this run that took too long on turbo (autotune); offered the light model once it reaches 3.
+    slow_takes: u8,
+    /// The Arabic dialect of the last dictation that had one (the pill's badge), e.g. "Gulf".
+    heard: &'static str,
 }
+
+fn dialect_label(code: &str) -> &'static str {
+    match code {
+        "gulf" => "Gulf",
+        "egyptian" => "Egyptian",
+        "levantine" => "Levantine",
+        "msa" => "MSA",
+        _ => "",
+    }
+}
+
+/// Autotune: a dictation is slow when turning it into text takes over 3 s and over half as long as the speech.
+fn too_slow(spoke_s: f32, took: Duration) -> bool {
+    let took = took.as_secs_f32();
+    took > 3.0 && took > spoke_s * 0.5
+}
+const SLOW_TAKES_BEFORE_OFFER: u8 = 3;
 
 impl Controller {
     pub fn new(app: AppHandle) -> Self {
-        Self { app, take: None, last: None, hovering: false, ready: false, shown: None, hold_until: None, engine_error: None, deferred: Vec::new() }
+        Self {
+            app, take: None, last: None, hovering: false, ready: false, shown: None, hold_until: None, engine_error: None,
+            deferred: Vec::new(), slow_takes: 0, heard: "",
+        }
+    }
+
+    /// Turbo running on the processor, and the light model not chosen yet: the only setup autotune can speed up.
+    fn on_turbo_cpu(&self) -> bool {
+        use crate::assets::{prefers_light, Part};
+        let cpu = self.state().engine.lock().unwrap().as_ref().is_some_and(|h| h.device != "cuda");
+        cpu && !prefers_light() && Part::WhisperCpu.installed() && !Part::WhisperGpu.installed()
     }
 
     fn state(&self) -> tauri::State<'_, App> {
@@ -131,7 +162,7 @@ impl Controller {
         self.hold_until = None;
         let notes = self.state().meeting.lock().unwrap().as_ref().map(|m| m.started.elapsed().as_secs());
         let view = if self.hovering {
-            View::Hover { notes_on: notes.is_some(), talk_key: talk_key_label(), notes_key: NOTES_KEY_LABEL }
+            View::Hover { notes_on: notes.is_some(), talk_key: talk_key_label(), notes_key: NOTES_KEY_LABEL, dialect: self.heard }
         } else if let Some(seconds) = notes {
             View::Notes { seconds }
         } else {
@@ -203,12 +234,20 @@ impl Controller {
             return self.heard(&audio);
         }
         self.render(View::Busy);
-        let (langs, mode, style) = {
+        let (langs, mode, style, dialect) = {
             let state = self.state();
             let s = state.settings.lock().unwrap();
-            (s.langs(), s.mode.clone(), s.styles.for_kind(take.app_kind).to_string())
+            (s.langs(), s.mode.clone(), s.styles.for_kind(take.app_kind).to_string(), s.dialect.clone())
         };
-        let Some(result) = self.call_engine(|| sidecar::dictate(&audio, &langs, &mode, &style)) else { return };
+        let asked = Instant::now();
+        let Some(result) = self.call_engine(|| sidecar::dictate(&audio, &langs, &mode, &style, &dialect)) else { return };
+        if let Some(d) = &result.dialect {
+            self.heard = dialect_label(d);
+        }
+        if too_slow(seconds, asked.elapsed()) && self.on_turbo_cpu() {
+            self.slow_takes = self.slow_takes.saturating_add(1);
+            crate::log(format!("slow dictation: {seconds:.1} s of speech took {:.1} s", asked.elapsed().as_secs_f32()));
+        }
         if result.text.trim().is_empty() {
             return self.problem("Didn't catch that. Try again.");
         }
@@ -250,6 +289,10 @@ impl Controller {
         let _ = self.app.emit("dictation", &entry);
         match fallback {
             Some(detail) => self.done(result.text, detail),
+            None if (SLOW_TAKES_BEFORE_OFFER..u8::MAX).contains(&self.slow_takes) => {
+                self.slow_takes = u8::MAX; // offered once per run; "Later" asks again next time Nabra starts
+                self.flash(View::Slow, UPDATE_PROMPT_FOR);
+            }
             None => {
                 self.hold_until = None;
                 self.rest();
@@ -525,10 +568,19 @@ impl Controller {
                 }
                 Ok(Control::Updating(label)) => self.flash(View::Working { label }, UPDATING_FOR),
                 Ok(Control::UpdateFailed(message)) => self.problem(message),
+                // More models arrived after Nabra started (the light model, or the AI model finishing): use them.
+                Ok(Control::SetupDone) if self.take.is_none() => {
+                    self.render(View::Working { label: "Loading the new model…".into() });
+                    match self.start_engine() {
+                        Ok(_) => self.done("Ready", "Using the new model"),
+                        Err(e) => self.problem(e),
+                    }
+                }
+                Ok(c @ Control::SetupDone) => self.deferred.push(c),
                 Ok(Control::Hover(on)) => {
                     self.hovering = on;
                     if self.take.is_none() {
-                        if on && !matches!(self.shown, Some(View::Meeting { .. } | View::Update { .. } | View::Working { .. })) {
+                        if on && !matches!(self.shown, Some(View::Meeting { .. } | View::Update { .. } | View::Slow | View::Working { .. })) {
                             self.hold_until = None; // hovering dismisses a lingering result (not a meeting prompt)
                         }
                         self.rest();
@@ -584,4 +636,17 @@ fn hold_key_up(command: bool) -> bool {
         keyboard::TALK_KEYS.iter().find(|k| k.1 == talk_key_label()).map_or((0, true), |k| (k.2, k.3))
     };
     !swallowed && unsafe { GetAsyncKeyState(vk as i32) } >= 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn autotune_flags_only_slow_dictations() {
+        assert!(too_slow(5.0, Duration::from_secs(4))); // 5 s of speech, 4 s to get text: too slow
+        assert!(!too_slow(5.0, Duration::from_secs(2))); // quick enough
+        assert!(!too_slow(30.0, Duration::from_secs(8))); // a long dictation may take a while
+        assert!(too_slow(1.0, Duration::from_millis(3500)));
+    }
 }

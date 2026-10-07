@@ -11,7 +11,14 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from lexicon import Lexicon, phonetic_key  # noqa: E402
 from polish import as_list, check_edit, main_language  # noqa: E402
-from textnorm import fold, levenshtein  # noqa: E402
+from textnorm import dialect_of, fold, levenshtein  # noqa: E402
+
+# dialect badge (marker words)
+assert dialect_of("وش رايك نرفع الـ app الحين؟") == "gulf"
+assert dialect_of("أنا عايز أعمل deploy دلوقتي") == "egyptian"
+assert dialect_of("بدي خلص الشغل هلق") == "levantine"
+assert dialect_of("نرجو منكم الحضور في الموعد المحدد") is None  # MSA is chosen, never guessed
+assert dialect_of("hello there") is None
 
 # textnorm
 assert fold("إِنَّ الْمَدْرَسَةَ") == fold("ان المدرسه")
@@ -35,12 +42,15 @@ restores = {
     "بالرياكت وأربطها": "بالـ React وأربطها",      # exact form beats fuzzy "pull request"
     "deploy للـ app": "deploy للـ app",             # Latin span never swallows the Arabic article
     "أكتب ببيثون": "أكتب بـ Python",               # one-letter preposition, exact spelling
+    "ارفع الفايل على جوجل درايف": "ارفع الفايل على Google Drive",  # exact first: fuzzy mustn't swallow على
+    "نعمل ريفاكتور ونكتب يونت تستس": "نعمل refactor ونكتب unit tests",
 }
 for src, want in restores.items():
     assert (got := lex.restore(src)) == want, f"{src!r} → {got!r}, want {want!r}"
 # Ordinary Arabic must come out untouched (these all collided with terms in early versions).
 for plain in ["يسعدني إبلاغكم بأن المشروع قد اكتمل", "يرجى مراجعة التقرير المرفق", "وبعدين من غير ما أدفع",
-              "نود أن نشكركم على الحضور", "المبلغ الباقي", "رفر بسيط", "شو رأيك"]:
+              "نود أن نشكركم على الحضور", "المبلغ الباقي", "رفر بسيط", "شو رأيك",
+              "وش رايك و نكتب الكود بكرة"]:  # و نكتب ("and we write") was one edit from MongoDB
     assert lex.restore(plain) == plain, f"over-correction: {plain!r} → {lex.restore(plain)!r}"
 
 # user dictionary wins and reloads
