@@ -68,6 +68,10 @@ class Engine:
                         log.info("cleanup rejected: %s", reason.split(" [")[0])  # reason only, no words
                 except (httpx.HTTPError, KeyError, TypeError, ValueError) as err:  # incl. a cut-off or malformed reply
                     log.warning("LLM cleanup failed (%s); using lexicon output", type(err).__name__)
+                try:
+                    text = self.llm.lists(text)
+                except (httpx.HTTPError, KeyError, TypeError, ValueError) as err:  # JSONDecodeError is a ValueError
+                    log.warning("LLM list pass failed (%s)", type(err).__name__)
             text, replaced = self.lexicon.replace(text)
             fixes["dictionary"] += replaced
             text, _ = spoken_breaks(text)

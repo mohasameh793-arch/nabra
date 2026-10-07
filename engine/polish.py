@@ -1,4 +1,5 @@
 """Local LLM passes (Qwen3 via llama.cpp's OpenAI-compatible server): cleanup + guard, and call summaries."""
+import json
 import os
 import re
 
@@ -12,9 +13,6 @@ CLEANUP_RULES = """You fix dictated text. The speaker mixes Arabic (any dialect)
   but only when you are sure (كوبرنيتيس → Kubernetes, الداشبورد → الـ dashboard).
 - Before an English word, write the Arabic article as "الـ " (الـ API، للـ app، بالـ React).
 - Fix punctuation and capitalization. Do not rephrase, reorder, add, remove, or correct grammar.
-- When the speaker lists three or more separate items (questions, steps, tasks, points), keep the lead-in
-  sentence, then put each item on its own line starting with "- ", in the order spoken. Text after the list
-  goes on a new line. Never turn a normal sentence into a list.
 - When unsure, leave the word as it is.
 Reply with the fixed text only."""
 
@@ -23,9 +21,19 @@ CLEANUP_EXAMPLES = [
     ("وش رايك نرفع الكونتينر على السيرفر الجديد بكره", "وش رايك نرفع الـ container على السيرفر الجديد بكره؟"),
     ("can you send me the slides before the meeting", "Can you send me the slides before the meeting?"),
     ("نرجو منكم الحضور في الموعد المحدد", "نرجو منكم الحضور في الموعد المحدد."),
-    ("for the trip I need to pack the charger the passport and the tickets then call the hotel",
-     "For the trip I need to pack:\n- The charger\n- The passport\n- The tickets\nThen call the hotel."),
 ]
+
+LIST_RULES = """The user dictated some text, split into numbered sentences. Find the run of 3 or more CONSECUTIVE
+sentences that are parallel list items: a series of questions, tasks, steps or points of the same kind. Normal prose,
+a story or an argument is not a list. A sentence that announces the items ("I have a few things.", "عندي كذا شغلة.")
+is NOT an item. Two alternatives ("today? or tomorrow?") and closing remarks ("tell me", "thanks") are not items.
+Reply with JSON only: {"first": n, "last": n} for the run, or {"first": 0, "last": 0} if there is none."""
+LIST_EXAMPLES = [
+    ("1. Before the launch we have work.\n2. Fix the login.\n3. Update the docs.\n4. Test on Android.\n5. Thanks.",
+     '{"first": 2, "last": 4}'),
+    ("1. نسافر الخميس؟\n2. ولا الجمعة؟\n3. قول لي.", '{"first": 0, "last": 0}'),
+]
+SENTENCE_END = re.compile(r"(?<=[.?!؟])\s+")
 
 SUMMARY_RULES = """You summarize a call transcript. Lines start with ME (the user), a person's name, or THEM (someone
 else whose name isn't known).
@@ -82,7 +90,22 @@ class Llm:
         for before, after in CLEANUP_EXAMPLES:
             messages += [{"role": "user", "content": before}, {"role": "assistant", "content": after}]
         messages.append({"role": "user", "content": text})
-        return self.chat(messages, max_tokens=800, whole=True)  # room for long, list-shaped dictations
+        return self.chat(messages, max_tokens=400, whole=True)
+
+    def lists(self, text: str) -> str:
+        """Spoken enumerations become "- " bullet lists (like Wispr Flow). The LLM only picks which sentences
+        are items; the text is rebuilt here from the user's own sentences, so no word can change."""
+        sentences = SENTENCE_END.split(text.strip())
+        if len(sentences) < 3:
+            return text
+        messages = [{"role": "system", "content": LIST_RULES}]
+        for numbered, answer in LIST_EXAMPLES:
+            messages += [{"role": "user", "content": numbered}, {"role": "assistant", "content": answer}]
+        numbered = "\n".join(f"{i + 1}. {one_line(s)}" for i, s in enumerate(sentences))
+        reply = self.chat(messages + [{"role": "user", "content": numbered}], max_tokens=40)
+        found = re.search(r"\{.*?\}", reply, re.S)
+        run = json.loads(found[0]) if found else {}
+        return as_list(sentences, int(run.get("first", 0)), int(run.get("last", 0)))
 
     def summarize(self, lines: list[dict], language: str | None) -> str:
         spoken = [l for l in lines if l.get("text", "").strip()]
@@ -174,6 +197,21 @@ def main_language(lines: list[str]) -> str:
         arabic = sum(is_arabic(w) for w in words)
         votes["ar" if 2 * arabic >= len(words) else "en"] += len(words)
     return max(votes, key=votes.get)
+
+
+def as_list(sentences: list[str], first: int, last: int) -> str:
+    """Sentences first..last (1-based) as "- " lines; the sentences before them become the intro, ending in ":"."""
+    if not (1 <= first and last - first >= 2 and last <= len(sentences)):
+        return " ".join(sentences)
+    if first == 1 and last - first >= 3:
+        # ponytail: the 8B model often counts a short opener ("For tomorrow.") as an item; with 4+ items it's the intro.
+        first = 2
+    intro = " ".join(sentences[:first - 1])
+    lines = [re.sub(r"[.،,]$", "", intro) + ":"] if intro else []
+    lines += [f"- {s}" for s in sentences[first - 1:last]]
+    if rest := " ".join(sentences[last:]):
+        lines.append(rest)
+    return "\n".join(lines)
 
 
 def one_line(text) -> str:

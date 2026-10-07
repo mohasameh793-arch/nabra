@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from lexicon import Lexicon, phonetic_key  # noqa: E402
-from polish import check_edit, main_language  # noqa: E402
+from polish import as_list, check_edit, main_language  # noqa: E402
 from textnorm import fold, levenshtein  # noqa: E402
 
 # textnorm
@@ -77,8 +77,14 @@ assert not is_hallucination("GitHub", prompt) and not is_hallucination("Thank yo
 # the guard
 assert check_edit("وبعدها أضيف انستول", "وبعدها أضيف install") is None
 assert check_edit("نستخدم Docker بدل", "نستخدم Docker بدل.") is None
-assert check_edit("attack everything how did I build it how to make it stronger how to make it organized",
-                  "Attack everything:\n- How did I build it?\n- How to make it stronger?\n- How to make it organized?") is None
+
+# spoken lists: rebuilt from the user's own sentences
+s = ["Attack everything.", "How did I build it?", "How to make it stronger?", "How to make it organized?", "Thanks."]
+assert as_list(s, 2, 4) == "Attack everything:\n- How did I build it?\n- How to make it stronger?\n- How to make it organized?\nThanks."
+assert as_list(s, 0, 0) == " ".join(s)                    # no list
+assert as_list(s, 2, 3) == " ".join(s)                    # 2 items is not a list
+assert as_list(s, 1, 4).startswith("Attack everything:")  # a 4+ run from sentence 1: the opener is the intro
+assert as_list(s, 3, 9) == " ".join(s)                    # out of range
 assert check_edit("أنا أبغى أسوي موقع", "I want to build a website")              # translation
 assert check_edit("نستخدم Postgres", "نستخدم PostgreSQL")                          # changed user's word
 assert check_edit("عندي 16 جيجا", "عندي 32 جيجا")                                 # number
