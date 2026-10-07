@@ -456,13 +456,25 @@ impl Store {
 
     /// Voices the user has named in earlier calls.
     pub fn known_voices(&self) -> Vec<KnownVoice> {
-        read_json(&self.voices_path())
+        self.load_voices().unwrap_or_else(|e| {
+            eprintln!("store: {e}");
+            Vec::new()
+        })
+    }
+
+    /// Names saved before 2.1.17 can carry the browser's invisible direction marks; drop them so they match.
+    fn load_voices(&self) -> Result<Vec<KnownVoice>, String> {
+        let mut all: Vec<KnownVoice> = load_json(&self.voices_path())?;
+        for k in &mut all {
+            k.name = crate::attendees::strip_bidi(&k.name).trim().to_string();
+        }
+        Ok(all)
     }
 
     /// Remember (or refine) `name`'s voice. Averaging over calls makes recognition steadier.
     pub fn remember_voice(&self, name: &str, voice: &[f32], phrases: u32) -> Result<(), String> {
         let _g = self.guard();
-        let mut all: Vec<KnownVoice> = load_json(&self.voices_path())?;
+        let mut all = self.load_voices()?;
         match all.iter_mut().find(|k| k.name.eq_ignore_ascii_case(name)) {
             Some(k) if k.voice.len() == voice.len() => {
                 let (a, b) = (k.phrases.max(1) as f32, phrases.max(1) as f32);
@@ -478,7 +490,7 @@ impl Store {
     /// Forget one remembered voice (it was proven wrong: the meeting window showed someone else talking).
     pub fn forget_voice(&self, name: &str) -> Result<(), String> {
         let _g = self.guard();
-        let mut all: Vec<KnownVoice> = load_json(&self.voices_path())?;
+        let mut all = self.load_voices()?;
         let before = all.len();
         all.retain(|k| !k.name.eq_ignore_ascii_case(name));
         if all.len() == before {
@@ -709,6 +721,18 @@ mod tests {
         assert_eq!(s.mode, "clean");
         assert!(Settings { languages: vec![], ..Settings::default() }.validate().is_err());
         assert!(Settings { languages: vec!["../x".into()], ..Settings::default() }.validate().is_err());
+    }
+
+    #[test]
+    fn voice_names_lose_direction_marks() {
+        let store = temp_store("voices");
+        fs::create_dir_all(&store.dir).unwrap();
+        fs::write(store.voices_path(), "[{\"name\":\"\\u202a\\u202aheba nassar\\u202c\\u200f\",\"voice\":[1.0],\"phrases\":3}]").unwrap();
+        assert_eq!(store.known_voices()[0].name, "heba nassar");
+        store.remember_voice("heba nassar", &[1.0], 1).unwrap(); // refines the same voice, no duplicate
+        assert_eq!(store.known_voices().len(), 1);
+        store.forget_voice("Heba Nassar").unwrap();
+        assert!(store.known_voices().is_empty());
     }
 
     #[test]

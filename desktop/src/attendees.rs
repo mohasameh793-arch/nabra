@@ -114,7 +114,7 @@ fn talking_name(label: &str) -> Option<String> {
 
 /// Removes the invisible direction marks browsers put around names in Arabic pages (U+202A…U+202E, U+200E/F,
 /// U+2066…U+2069), so a marked-up "Block guide" matches the plain name.
-fn strip_bidi(s: &str) -> String {
+pub fn strip_bidi(s: &str) -> String {
     s.chars().filter(|c| !matches!(c, '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')).collect()
 }
 

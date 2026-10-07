@@ -302,6 +302,22 @@ fn main() {
             });
             updater::watch(app.handle().clone());
             listen_for_toggle_notes(app.handle().clone());
+            if std::env::args().any(|a| a == "--notes") {
+                // Nabra wasn't open yet: start notes once the speech engine is up (it picks live mode on start).
+                let app = app.handle().clone();
+                std::thread::spawn(move || {
+                    for _ in 0..90 {
+                        if app.state::<App>().engine.lock().unwrap().is_some() {
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_secs(1));
+                    }
+                    log("--notes: starting call notes");
+                    if let Err(e) = toggle_meeting(&app) {
+                        log(format!("--notes: {e}"));
+                    }
+                });
+            }
             // Voice model for "who is speaking" in call notes (small; first run or after updating).
             std::thread::spawn(|| {
                 if let Err(e) = assets::ensure_voice_model() {
