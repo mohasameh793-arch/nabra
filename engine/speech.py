@@ -7,6 +7,8 @@ from pathlib import Path
 
 import numpy as np
 
+from textnorm import fold
+
 log = logging.getLogger("nabra.speech")
 
 SAMPLE_RATE = 16_000
@@ -15,6 +17,20 @@ MIXED_EXAMPLE = "طيب خلنا نسوي deploy للـ app على Vercel وبع
 # Below this, detection is a guess (Gulf Arabic → "Persian"); above it the speaker really is using
 # that language, and forcing another one would make Whisper TRANSLATE instead of transcribe.
 CONFIDENT_DETECTION = 0.8
+# Quieter than this is silence/fan noise (~-50 dBFS); Whisper "hears" Thank you. in it.
+SILENCE_RMS = 0.003
+# What Whisper says over silence (trained on subtitled video). Compared folded, whole segment only.
+_HALLUCINATIONS = {fold(s) for s in [
+    "Thank you for watching", "Thanks for watching", "Please subscribe", "Subtitles by the Amara.org community",
+    "شكرا للمشاهدة", "شكرا لكم على المشاهدة", "اشتركوا في القناة", "ترجمة نانسي قنقر",
+]}
+
+
+def is_hallucination(segment: str, prompt: str) -> bool:
+    """A segment that is a stock silence phrase, or the prompt (example sentence / vocabulary) echoed back.
+    One- or two-word segments may legitimately be a vocabulary term, so only longer echoes count."""
+    f = fold(segment)
+    return not f or f in _HALLUCINATIONS or (len(f.split()) >= 3 and f in fold(prompt))
 
 
 def _cuda_dlls_on_path(cuda_dir: Path | None) -> None:
@@ -67,7 +83,7 @@ class Transcriber:
         from faster_whisper import decode_audio
 
         audio = decode_audio(io.BytesIO(wav), sampling_rate=SAMPLE_RATE)
-        if len(audio) < SAMPLE_RATE * 0.3:
+        if len(audio) < SAMPLE_RATE * 0.3 or np.sqrt(np.mean(audio ** 2)) < SILENCE_RMS:
             return "", None
         forced = self.choose_language(audio, allowed)
         arabic_in_play = not allowed or "ar" in allowed
@@ -76,5 +92,6 @@ class Transcriber:
             beam_size = 1  # several times faster on a processor, for a small accuracy cost
         segments, info = self.model.transcribe(
             audio, language=forced, multilingual=forced is None, vad_filter=True, beam_size=beam_size,
-            initial_prompt=prompt)
-        return " ".join(s.text.strip() for s in segments).strip(), forced or info.language
+            initial_prompt=prompt, condition_on_previous_text=False)  # no repetition loops on long dictations
+        text = " ".join(s.text.strip() for s in segments if not is_hallucination(s.text, prompt)).strip()
+        return text, (forced or info.language) if text else None

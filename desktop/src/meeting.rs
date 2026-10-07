@@ -25,7 +25,9 @@ const MAX_PHRASE_S: f32 = 12.0; // long monologues still finalize regularly (and
 /// Live text: re-transcribe the phrase in progress this often.
 const PARTIAL_EVERY: Duration = Duration::from_millis(700);
 const MIN_PARTIAL_S: f32 = 0.8;
-const ECHO_WINDOW_S: f32 = 30.0;
+// ponytail: an echo starts within a phrase cut (~2 s) of the line it echoes; a wider window deleted the user
+// repeating something back. Compare phrase spans if real echoes still slip through.
+const ECHO_WINDOW_S: f32 = 2.5;
 
 // ponytail: one fixed similarity bar (cosine, WeSpeaker ResNet34). Raise it if two people get merged, lower it
 // if one person splits into two; per-call adaptive clustering if fixed bars prove too blunt.
@@ -136,6 +138,21 @@ impl Phrases {
             }
         }
         self.buf.extend_from_slice(samples);
+    }
+
+    /// Loopback sends nothing while the call is silent: keep this side's clock at `now` (seconds since recording
+    /// started) so "them" lines aren't stamped early, and a phrase cut off by silence still ends.
+    pub fn pad_to(&mut self, now: f32) {
+        let behind = now - self.start - self.secs(self.buf.len());
+        if behind < 0.3 {
+            return;
+        }
+        if self.buf.is_empty() {
+            self.start += behind;
+        } else {
+            // Enough silence to end the phrase; the rest is skipped once it's sent (no huge buffer after a sleep).
+            self.feed(&vec![0.0; (behind.min(PAUSE_S + 0.1) * self.rate as f32) as usize]);
+        }
     }
 
     /// The phrase still being spoken, for live text: (samples so far, start time) once there's speech.
@@ -396,10 +413,9 @@ pub fn name_speaker(app: &AppHandle, note_id: &str, speaker: &str, name: &str) -
             (v, speakers_json(&n))
         }
         None => {
-            let mut n = state.store.note(note_id)?;
-            let v = rename(&mut n).ok_or("Unknown speaker")?;
-            state.store.save_note(&n)?;
-            (v, speakers_json(&n))
+            let mut v = None;
+            let n = state.store.update_note(note_id, |n| v = rename(n))?;
+            (v.ok_or("Unknown speaker")?, speakers_json(&n))
         }
     };
     if !name.is_empty() && !voice.0.is_empty() {
@@ -430,7 +446,7 @@ pub fn add_attendees(app: &AppHandle, note_id: &str, names: Vec<String>) {
 /// Summarize + title a saved note, store it, and tell the hub.
 pub fn summarize(app: &AppHandle, id: &str, language: Option<String>) -> Result<Note, String> {
     let state = app.state::<App>();
-    let mut note = state.store.note(id)?;
+    let note = state.store.note(id)?;
     let language = language.or_else(|| state.settings.lock().unwrap().summary_language.clone());
     let name_of = |l: &Line| l.speaker.as_ref().and_then(|id| note.speakers.iter().find(|s| &s.id == id)).map(|s| s.name.clone());
     let lines: Vec<serde_json::Value> = note
@@ -440,11 +456,14 @@ pub fn summarize(app: &AppHandle, id: &str, language: Option<String>) -> Result<
         .collect();
     let lines = serde_json::Value::Array(lines);
     let (summary, title) = sidecar::summarize(&lines, language.as_deref())?;
-    note.summary = Some(summary);
-    if note.title.is_empty() && !title.is_empty() {
-        note.title = title; // a calendar event's name wins over the AI's guess
-    }
-    state.store.save_note(&note)?;
+    // Re-read before saving: thoughts or names edited during the (slow) summary must not be overwritten,
+    // and a note deleted meanwhile must not come back.
+    let note = state.store.update_note(id, |n| {
+        n.summary = Some(summary);
+        if n.title.is_empty() && !title.is_empty() {
+            n.title = title; // a calendar event's name wins over the AI's guess
+        }
+    })?;
     let _ = app.emit("note-updated", &note.id);
     Ok(note)
 }
@@ -460,7 +479,17 @@ pub struct Job {
 
 fn handle(app: &AppHandle, note: &Mutex<Note>, langs: &str, job: &Job, next_id: &mut u64, voices: &mut Voices) {
     let who = if job.source == Source::System { "them" } else { "you" };
-    let text = match sidecar::note_chunk(&wav(&job.samples, job.rate), langs, job.partial) {
+    let audio = wav(&job.samples, job.rate);
+    let mut text = sidecar::note_chunk(&audio, langs, job.partial);
+    // A finished phrase is never thrown away over a hiccup (engine restarting or busy): try again twice.
+    for _ in 0..if job.partial { 0 } else { 2 } {
+        if text.is_ok() {
+            break;
+        }
+        std::thread::sleep(Duration::from_secs(2));
+        text = sidecar::note_chunk(&audio, langs, false);
+    }
+    let text = match text {
         Ok(text) => text,
         Err(e) => {
             if !job.partial {
@@ -480,10 +509,11 @@ fn handle(app: &AppHandle, note: &Mutex<Note>, langs: &str, job: &Job, next_id: 
     }
     // Who said it (other side only; the mic is always "you"). The voiceprint is computed on the CPU.
     let voice = if who == "them" && !text.is_empty() {
-        sidecar::voice(&wav(&job.samples, job.rate)).unwrap_or_default()
+        sidecar::voice(&audio).unwrap_or_default()
     } else {
         Vec::new()
     };
+    let end = job.t + job.samples.len() as f32 / job.rate as f32;
     let line = {
         let mut n = note.lock().unwrap();
         if text.is_empty() || echo(&n) {
@@ -498,7 +528,6 @@ fn handle(app: &AppHandle, note: &Mutex<Note>, langs: &str, job: &Job, next_id: 
                 }
             }
             let speaker = (who == "them").then(|| {
-                let end = job.t + job.samples.len() as f32 / job.rate as f32;
                 let mut changed = false;
                 let id = voices.assign(&mut n.speakers, &voice, job.t, end, &mut changed);
                 if changed {
@@ -517,6 +546,12 @@ fn handle(app: &AppHandle, note: &Mutex<Note>, langs: &str, job: &Job, next_id: 
         let mut payload = serde_json::to_value(&line).unwrap_or_default();
         payload["note"] = note_id(note).into();
         let _ = app.emit("note-line", payload);
+        // Autosave after every line: a crash, forced quit or update mid-call keeps everything said so far.
+        let mut saved = note.lock().unwrap().clone();
+        saved.seconds = saved.seconds.max(end);
+        if let Err(e) = app.state::<App>().store.save_note(&saved) {
+            eprintln!("note autosave: {e}");
+        }
     }
     let _ = app.emit("note-partial", serde_json::json!({ "note": note_id(note), "who": who, "t": job.t, "text": "" })); // phrase done
 }
@@ -530,7 +565,7 @@ fn record(
     ready: Sender<Result<(), String>>,
 ) -> Result<(), String> {
     // cpal streams aren't Send: they're opened, read and dropped on this thread only.
-    let taps = match (Tap::open(Source::System, None), Tap::open(Source::Mic, mic.as_deref())) {
+    let mut taps = match (Tap::open(Source::System, None), Tap::open(Source::Mic, mic.as_deref())) {
         (Ok(system), Ok(microphone)) => [system, microphone],
         (Err(e), _) | (_, Err(e)) => {
             let _ = ready.send(Err(e.clone()));
@@ -539,14 +574,43 @@ fn record(
     };
     let _ = ready.send(Ok(()));
     let mut sides = [Phrases::new(Source::System, taps[0].rate), Phrases::new(Source::Mic, taps[1].rate)];
-    let mut last_partial = Instant::now();
+    let (clock, mut last_partial, mut tick, mut lost) = (Instant::now(), Instant::now(), 0u32, [false; 2]);
     let mut pump = |flush: bool| {
         let partial_due = live && !flush && last_partial.elapsed() >= PARTIAL_EVERY;
         if partial_due {
             last_partial = Instant::now();
         }
-        for (tap, side) in taps.iter().zip(sides.iter_mut()) {
-            side.feed(&tap.take());
+        tick += 1;
+        if !flush {
+            // Live sound meters for the meeting window: is it hearing the call, and you?
+            let _ = app.emit("meeting-level", serde_json::json!({ "them": taps[0].level(), "you": taps[1].level() }));
+        }
+        for (i, (tap, side)) in taps.iter_mut().zip(sides.iter_mut()).enumerate() {
+            // Headphones plugged in, Bluetooth dropped, default device switched: follow it (checked once a second).
+            if !flush && tick % 5 == 0 && tap.stale() {
+                match Tap::open(side.source, if side.source == Source::Mic { mic.as_deref() } else { None }) {
+                    Ok(new) => {
+                        side.feed(&tap.take());
+                        if let Some((samples, t)) = side.next(true) {
+                            let _ = out.send(Job { source: side.source, samples, rate: tap.rate, t, partial: false });
+                        }
+                        *side = Phrases { start: side.start, ..Phrases::new(side.source, new.rate) };
+                        *tap = new;
+                        lost[i] = false;
+                    }
+                    Err(e) if !lost[i] => {
+                        lost[i] = true;
+                        let what = if side.source == Source::Mic { "your microphone" } else { "the call audio" };
+                        let _ = app.emit("notes-problem", format!("Lost {what}; still trying to reconnect. {e}"));
+                    }
+                    Err(_) => {}
+                }
+            }
+            let samples = tap.take();
+            if samples.is_empty() && !flush {
+                side.pad_to(clock.elapsed().as_secs_f32());
+            }
+            side.feed(&samples);
             let rate = tap.rate;
             if let Some((samples, t)) = side.next(flush) {
                 let _ = out.send(Job { source: side.source, samples, rate, t, partial: false });
@@ -559,8 +623,6 @@ fn record(
     };
     while !stop.load(Ordering::SeqCst) {
         std::thread::sleep(Duration::from_millis(200));
-        // Live sound meters for the meeting window: is it hearing the call, and you?
-        let _ = app.emit("meeting-level", serde_json::json!({ "them": taps[0].level(), "you": taps[1].level() }));
         pump(false);
     }
     pump(true);
@@ -584,6 +646,18 @@ mod tests {
         assert!((p.start - 4.7).abs() < 1e-3);
         p.feed(&[0.3; 500]);
         assert!(p.next(true).is_some(), "flush sends the tail");
+    }
+
+    #[test]
+    fn silent_loopback_keeps_its_clock() {
+        let mut p = Phrases::new(Source::System, 1000);
+        p.feed(&[0.3; 2000]);
+        p.pad_to(60.0); // loopback went quiet mid-phrase: the phrase still ends
+        assert_eq!(p.next(false).map(|(s, at)| (s.len(), at)), Some((2700, 0.0)));
+        p.pad_to(60.0); // a long silence is skipped, not buffered
+        assert!(p.buf.is_empty() && (p.start - 60.0).abs() < 1e-3);
+        p.feed(&[0.3; 500]);
+        assert_eq!(p.next(true).map(|(_, at)| at), Some(60.0), "next phrase is stamped at wall time");
     }
 
     #[test]

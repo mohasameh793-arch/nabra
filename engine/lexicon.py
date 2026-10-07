@@ -9,6 +9,7 @@ Safety rules (each one came from a benchmark failure, see docs/BENCHMARKS.md):
   3. Text already in Latin script: casing only.    next.js → Next.js, never a different word
 """
 import json
+import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,6 +33,7 @@ _SPELLED = dict(zip("abcdefghijklmnopqrstuvwxyz",
 _ARTICLES = ("وبال", "وال", "بال", "فال", "كال", "لل", "ال")  # longest first
 _PREPOSITIONS = ("و", "ب", "ل", "ف", "ك")
 MIN_FUZZY_KEY = 4
+log = logging.getLogger("nabra.lexicon")
 
 
 def _squeeze(s: str) -> str:
@@ -66,6 +68,10 @@ class Entry:
                      frozenset(k for k in keys if len(k) >= MIN_FUZZY_KEY))
 
 
+def _strings(value) -> list[str]:
+    return [s for s in value if isinstance(s, str)] if isinstance(value, list) else []
+
+
 def load_builtin(path: Path) -> list[Entry]:
     """TSV: term <TAB> comma-separated spoken forms (optional). '#' starts a comment."""
     entries = []
@@ -84,6 +90,7 @@ class Lexicon:
         self.builtin = load_builtin(builtin)
         self.user_path = user
         self._user: list[Entry] = []
+        self._all: list[Entry] = self.builtin  # user dictionary first (it wins ties), then built-in
         self._replacements: list[tuple[re.Pattern, str]] = []
         self._user_mtime = None
 
@@ -93,26 +100,32 @@ class Lexicon:
         mtime = self.user_path.stat().st_mtime
         if mtime == self._user_mtime:
             return
-        data = json.loads(self.user_path.read_text(encoding="utf-8") or "[]")
-        self._user = [Entry.make(d["term"], d.get("sounds_like", [])) for d in data if d.get("term")]
-        self._replacements = [
-            (re.compile(rf"(?<!\w){re.escape(d['from'])}(?!\w)", re.IGNORECASE), d["to"])
-            for d in data if d.get("from") and d.get("to")
-        ]
-        self._user_mtime = mtime
+        self._user_mtime = mtime  # a bad file is reported once, not on every utterance
+        try:  # half-written by the app or hand-edited: keep the previous dictionary
+            data = json.loads(self.user_path.read_text(encoding="utf-8") or "[]")
+            data = [d for d in data if isinstance(d, dict)]
+            self._user = [Entry.make(d["term"], _strings(d.get("sounds_like")))
+                          for d in data if d.get("term") and isinstance(d["term"], str)]
+            self._replacements = [
+                (re.compile(rf"(?<!\w){re.escape(d['from'])}(?!\w)", re.IGNORECASE), d["to"])
+                for d in data if isinstance(d.get("from"), str) and isinstance(d.get("to"), str) and d["from"] and d["to"]
+            ]
+        except (OSError, ValueError, TypeError) as err:
+            log.warning("user dictionary unreadable, keeping the previous one (%s)", err)
+        self._all = self._user + self.builtin
 
     @property
     def entries(self) -> list[Entry]:
         """User dictionary first (it wins ties), reloaded whenever the app saves it."""
         self._reload_user()
-        return self._user + self.builtin
+        return self._all
 
     def replace(self, text: str) -> tuple[str, int]:
         """Apply the user's text replacements (btw → by the way). Returns (text, how many fired)."""
         self._reload_user()
         hits = 0
         for pattern, to in self._replacements:
-            text, n = pattern.subn(to, text)
+            text, n = pattern.subn(lambda _m, t=to: t, text)  # literal: C:\Users must not be a regex escape
             hits += n
         return text, hits
 
@@ -123,7 +136,7 @@ class Lexicon:
 
     def _exact(self, span: str) -> Entry | None:
         f = fold(span)
-        return next((e for e in self.entries if f in e.forms), None)
+        return next((e for e in self._all if f in e.forms), None)
 
     def _fuzzy(self, span: str) -> Entry | None:
         if is_latin(span):
@@ -132,7 +145,7 @@ class Lexicon:
         if len(key) < MIN_FUZZY_KEY:
             return None
         best, best_d = None, None
-        for e in self.entries:
+        for e in self._all:
             for k in e.keys:
                 budget = 0 if len(k) <= 4 else 1
                 if abs(len(k) - len(key)) > budget:
@@ -174,13 +187,15 @@ class Lexicon:
                 joined = " ".join(tokens[i:i + n])
                 m = re.search(r"[^\w.]+$", joined)
                 span, tail = (joined[:m.start()], m.group()) if m else (joined, "")
+                h = re.match(r"[^\w.]+", span)  # opening bracket/quote survives: (دوكر) → (Docker)
+                head, span = (h.group(), span[h.end():]) if h else ("", span)
                 if not span:
                     continue
                 if not is_arabic(span):
                     # Latin text is the speaker's own wording: only normalize casing of known terms.
-                    hit = next((e for e in self.entries if e.term.lower() == span.lower()), None)
+                    hit = next((e for e in self._all if e.term.lower() == span.lower()), None)
                     if hit:
-                        out.append(hit.term + tail)
+                        out.append(head + hit.term + tail)
                         i += n
                         break
                     continue
@@ -188,7 +203,7 @@ class Lexicon:
                 if found:
                     entry, prefix = found
                     count(entry)
-                    out.append(prefix + entry.term + tail)
+                    out.append(head + prefix + entry.term + tail)
                     i += n
                     break
             else:

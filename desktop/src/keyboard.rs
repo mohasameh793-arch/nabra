@@ -7,23 +7,28 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::OnceLock;
 
-use windows::core::PWSTR;
+use std::ffi::c_void;
+
+use windows::core::{w, PWSTR};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, HGLOBAL, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::DataExchange::{
-    CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber, OpenClipboard, SetClipboardData,
+    CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber, OpenClipboard, RegisterClipboardFormatW,
+    SetClipboardData,
 };
+use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
 use windows::Win32::System::Ole::CF_UNICODETEXT;
 use windows::Win32::System::Threading::{
-    OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+    GetCurrentProcess, OpenProcess, OpenProcessToken, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
     KEYEVENTF_UNICODE, VIRTUAL_KEY, VK_CONTROL, VK_MENU, VK_RCONTROL, VK_RETURN, VK_RMENU, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, GetForegroundWindow, GetMessageW, GetWindowTextW, GetWindowThreadProcessId, SetWindowsHookExW, KBDLLHOOKSTRUCT,
-    LLKHF_INJECTED, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
+    CallNextHookEx, GetForegroundWindow, GetMessageW, GetWindowTextW, GetWindowThreadProcessId, SetTimer, SetWindowsHookExW,
+    UnhookWindowsHookEx, KBDLLHOOKSTRUCT, LLKHF_INJECTED, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
+    WM_TIMER,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -98,7 +103,8 @@ unsafe extern "system" fn on_key(code: i32, wparam: WPARAM, lparam: LPARAM) -> L
         let synthetic = key.flags.0 & LLKHF_INJECTED.0 != 0; // includes our own typing
         let mut fire = None;
         if !synthetic && key.vkCode == COMMAND_KEY {
-            if down && !COMMAND_HELD.swap(true, Ordering::SeqCst) {
+            // A held flag with the key physically up means its key-up was lost (Win+L, UAC, RDP): a fresh press.
+            if down && (!COMMAND_HELD.swap(true, Ordering::SeqCst) || !held(VK_RMENU)) {
                 COMMAND_SPOILED.store(false, Ordering::SeqCst);
                 fire = Some(Shortcut::CommandPressed);
             } else if up && COMMAND_HELD.swap(false, Ordering::SeqCst) {
@@ -114,9 +120,12 @@ unsafe extern "system" fn on_key(code: i32, wparam: WPARAM, lparam: LPARAM) -> L
         }
         let (_, _, talk_vk, swallow_talk) = TALK_KEYS[TALK_KEY.load(Ordering::SeqCst) as usize];
         let combo = COMBOS.iter().find(|(vk, _)| *vk == key.vkCode).map(|(_, s)| *s);
+        if !synthetic && down && combo.is_none() {
+            COMBO_HELD.store(0, Ordering::SeqCst); // any other key (e.g. Ctrl/Alt) ends a combo whose key-up was lost
+        }
         if !synthetic && key.vkCode == talk_vk {
             // Auto-repeat sends many downs; only the first press and the release matter.
-            if down && !TALK_HELD.swap(true, Ordering::SeqCst) {
+            if down && (!TALK_HELD.swap(true, Ordering::SeqCst) || (!swallow_talk && !held(VIRTUAL_KEY(talk_vk as u16)))) {
                 TALK_SPOILED.store(false, Ordering::SeqCst);
                 fire = Some(Shortcut::TalkPressed);
             } else if up && TALK_HELD.swap(false, Ordering::SeqCst) && !TALK_SPOILED.load(Ordering::SeqCst) {
@@ -134,8 +143,11 @@ unsafe extern "system" fn on_key(code: i32, wparam: WPARAM, lparam: LPARAM) -> L
         // Ctrl+Alt+<letter>. Not with Right Alt held: that's AltGr typing a character (e.g. ń on Polish layouts).
         if let Some(shortcut) = combo.filter(|_| !synthetic) {
             if down && held(VK_CONTROL) && held(VK_MENU) && !held(VK_RMENU) {
-                if COMBO_HELD.swap(key.vkCode, Ordering::SeqCst) != key.vkCode {
-                    if let Some(tx) = SINK.get() {
+                if let Some(tx) = SINK.get() {
+                    if let Some(s) = fire {
+                        let _ = tx.send(s); // e.g. TalkCancelled: Right Ctrl was part of this shortcut
+                    }
+                    if COMBO_HELD.swap(key.vkCode, Ordering::SeqCst) != key.vkCode {
                         let _ = tx.send(shortcut);
                     }
                 }
@@ -157,12 +169,23 @@ unsafe extern "system" fn on_key(code: i32, wparam: WPARAM, lparam: LPARAM) -> L
 pub fn listen(tx: Sender<Shortcut>) {
     let _ = SINK.set(tx);
     std::thread::spawn(|| unsafe {
-        if let Err(e) = SetWindowsHookExW(WH_KEYBOARD_LL, Some(on_key), None, 0) {
-            eprintln!("keyboard hook: {e}");
-            return;
-        }
+        let mut hook = match SetWindowsHookExW(WH_KEYBOARD_LL, Some(on_key), None, 0) {
+            Ok(h) => h,
+            Err(e) => return eprintln!("keyboard hook: {e}"),
+        };
+        // Windows silently removes a low-level hook that once ran too slow (heavy load, resume) and never says so.
+        // Re-install it every 30 s: new one first, then drop the old (a double call in between is deduped by the
+        // *_HELD swaps).
+        SetTimer(None, 0, 30_000, None);
         let mut msg = MSG::default();
-        while GetMessageW(&mut msg, None, 0, 0).as_bool() {}
+        while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+            if msg.message == WM_TIMER {
+                if let Ok(fresh) = SetWindowsHookExW(WH_KEYBOARD_LL, Some(on_key), None, 0) {
+                    let _ = UnhookWindowsHookEx(hook);
+                    hook = fresh;
+                }
+            }
+        }
     });
 }
 
@@ -179,42 +202,124 @@ fn event(vk: VIRTUAL_KEY, unit: u16, release: bool) -> INPUT {
     }
 }
 
+/// A line break is Shift+Enter: in chat boxes (WhatsApp, Slack, Claude, ChatGPT) plain Enter sends the message.
+// ponytail: Shift+Enter moves up a cell in Excel; per-app newline keys if anyone dictates lists into Excel.
 fn keystrokes(text: &str) -> Vec<INPUT> {
     text.replace("\r\n", "\n")
         .encode_utf16()
         .flat_map(|u| {
-            let (vk, unit) = if u == u16::from(b'\n') { (VK_RETURN, 0) } else { (VIRTUAL_KEY(0), u) };
-            [event(vk, unit, false), event(vk, unit, true)]
+            if u == u16::from(b'\n') {
+                vec![event(VK_SHIFT, 0, false), event(VK_RETURN, 0, false), event(VK_RETURN, 0, true), event(VK_SHIFT, 0, true)]
+            } else {
+                vec![event(VIRTUAL_KEY(0), u, false), event(VIRTUAL_KEY(0), u, true)]
+            }
         })
         .collect()
 }
 
-/// Types into whatever has focus. Windows silently drops input aimed at elevated (admin) windows.
+/// Sends keystrokes after letting go of any modifier the user still holds (e.g. the talk key pressed again),
+/// so Enter doesn't become Ctrl/Shift/Alt+Enter (sending a half-written chat message) and Ctrl+Z stays Ctrl+Z.
+/// Returns how many of `inputs` were sent.
+fn send(inputs: &[INPUT]) -> usize {
+    // L/R Shift, Ctrl, Alt, Win. Not restored afterwards: a still-held key re-asserts itself by auto-repeat.
+    let mods: Vec<VIRTUAL_KEY> =
+        [0xA0u16, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0x5B, 0x5C].into_iter().map(VIRTUAL_KEY).filter(|&vk| held(vk)).collect();
+    let mut all = Vec::new();
+    if !mods.is_empty() {
+        // Tap an unassigned key first so a lone Alt/Win release doesn't open the menu bar / Start.
+        all.extend([event(MASK_KEY, 0, false), event(MASK_KEY, 0, true)]);
+        all.extend(mods.iter().map(|&vk| event(vk, 0, true)));
+    }
+    let skip = all.len();
+    all.extend_from_slice(inputs);
+    (unsafe { SendInput(&all, size_of::<INPUT>() as i32) } as usize).saturating_sub(skip)
+}
+
+/// Is `process` running as admin? None if its token can't be read.
+fn elevated(process: HANDLE) -> Option<bool> {
+    unsafe {
+        let mut token = HANDLE::default();
+        OpenProcessToken(process, TOKEN_QUERY, &mut token).ok()?;
+        let mut e = TOKEN_ELEVATION::default();
+        let mut len = 0;
+        let size = size_of::<TOKEN_ELEVATION>() as u32;
+        let ok = GetTokenInformation(token, TokenElevation, Some(&mut e as *mut _ as *mut c_void), size, &mut len).is_ok();
+        let _ = CloseHandle(token);
+        ok.then_some(e.TokenIsElevated != 0)
+    }
+}
+
+/// The app in front runs as admin and we don't: Windows (UIPI) drops our typing yet reports it as sent.
+fn focused_is_admin() -> bool {
+    unsafe {
+        if elevated(GetCurrentProcess()) != Some(false) {
+            return false;
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(GetForegroundWindow(), Some(&mut pid));
+        let Ok(process) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else { return false };
+        // A non-admin can't open an admin process's token: unreadable means elevated (or another user, where
+        // the clipboard fallback is still fine).
+        let admin = elevated(process).unwrap_or(true);
+        let _ = CloseHandle(process);
+        admin
+    }
+}
+
+/// Types into whatever has focus.
 pub fn type_text(text: &str) -> Result<(), String> {
+    if focused_is_admin() {
+        return Err("That app runs as administrator and blocks typing".into());
+    }
     let inputs = keystrokes(text);
-    let sent = unsafe { SendInput(&inputs, size_of::<INPUT>() as i32) } as usize;
-    if sent == inputs.len() {
+    if send(&inputs) == inputs.len() {
         Ok(())
     } else {
         Err("That app blocked typing".into())
     }
 }
 
+/// OpenClipboard, retried briefly: clipboard managers and the app that just copied hold it for a moment.
+fn open_clipboard() -> bool {
+    (0..10).any(|i| {
+        if i > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        unsafe { OpenClipboard(Some(HWND::default())).is_ok() }
+    })
+}
+
+/// Puts `bytes` on the (open, emptied) clipboard as `format`.
+unsafe fn put(format: u32, bytes: &[u8]) -> Result<(), String> {
+    let mem = GlobalAlloc(GMEM_MOVEABLE, bytes.len()).map_err(|e| e.to_string())?;
+    let dst = GlobalLock(mem) as *mut u8;
+    if dst.is_null() {
+        return Err("GlobalLock failed".into());
+    }
+    std::ptr::copy_nonoverlapping(bytes.as_ptr(), dst, bytes.len());
+    let _ = GlobalUnlock(mem);
+    SetClipboardData(format, Some(HANDLE(mem.0))).map_err(|e| e.to_string())?;
+    Ok(()) // the clipboard owns `mem` now
+}
+
 pub fn copy(text: &str) -> Result<(), String> {
-    let utf16: Vec<u16> = text.encode_utf16().chain([0]).collect();
+    set_clipboard(text, false)
+}
+
+/// `private`: keep it out of Win+V history and cloud clipboard (e.g. restoring a password the user had copied).
+fn set_clipboard(text: &str, private: bool) -> Result<(), String> {
+    let bytes: Vec<u8> = text.encode_utf16().chain([0]).flat_map(u16::to_le_bytes).collect();
     unsafe {
-        OpenClipboard(Some(HWND::default())).map_err(|_| "Clipboard is busy".to_string())?;
+        if !open_clipboard() {
+            return Err("Clipboard is busy".into());
+        }
         let done = (|| -> Result<(), String> {
             EmptyClipboard().map_err(|e| e.to_string())?;
-            let mem = GlobalAlloc(GMEM_MOVEABLE, utf16.len() * 2).map_err(|e| e.to_string())?;
-            let dst = GlobalLock(mem) as *mut u16;
-            if dst.is_null() {
-                return Err("GlobalLock failed".into());
+            put(CF_UNICODETEXT.0 as u32, &bytes)?;
+            if private {
+                let _ = put(RegisterClipboardFormatW(w!("ExcludeClipboardContentFromMonitorProcessing")), &[0; 4]);
             }
-            std::ptr::copy_nonoverlapping(utf16.as_ptr(), dst, utf16.len());
-            let _ = GlobalUnlock(mem);
-            SetClipboardData(CF_UNICODETEXT.0 as u32, Some(HANDLE(mem.0))).map_err(|e| e.to_string())?;
-            Ok(()) // the clipboard owns `mem` now
+            Ok(())
         })();
         let _ = CloseClipboard();
         done
@@ -238,7 +343,7 @@ pub fn press(vk: VIRTUAL_KEY, ctrl: bool, shift: bool, times: usize) {
             inputs.push(event(mods, 0, true));
         }
     }
-    unsafe { SendInput(&inputs, size_of::<INPUT>() as i32) };
+    send(&inputs);
 }
 
 /// Characters as the user sees them (what Backspace / Shift+Left step over).
@@ -249,7 +354,9 @@ pub fn visible_len(text: &str) -> usize {
 
 pub fn read_clipboard() -> Option<String> {
     unsafe {
-        OpenClipboard(Some(HWND::default())).ok()?;
+        if !open_clipboard() {
+            return None;
+        }
         let text = (|| {
             let h = GetClipboardData(CF_UNICODETEXT.0 as u32).ok()?;
             let p = GlobalLock(HGLOBAL(h.0)) as *const u16;
@@ -279,7 +386,8 @@ pub fn selected_text() -> Option<String> {
     let before = unsafe { GetClipboardSequenceNumber() };
     press(VIRTUAL_KEY(b'C' as u16), true, false, 1);
     let mut changed = false;
-    for _ in 0..15 {
+    // ponytail: ~600 ms; an app slower than that (huge selection, RDP) is read as "nothing selected".
+    for _ in 0..30 {
         std::thread::sleep(std::time::Duration::from_millis(20));
         if unsafe { GetClipboardSequenceNumber() } != before {
             changed = true;
@@ -292,7 +400,7 @@ pub fn selected_text() -> Option<String> {
     }
     let got = read_clipboard().filter(|t| !t.trim().is_empty());
     if let Some(old) = saved {
-        let _ = copy(&old);
+        let _ = set_clipboard(&old, true); // already in history once; don't add it again
     }
     got
 }
@@ -355,10 +463,11 @@ mod tests {
     #[test]
     fn arabic_newline_and_emoji_keystrokes() {
         let k = keystrokes("سلام\nOK");
-        assert_eq!(k.len(), (4 + 1 + 2) * 2);
-        assert_eq!(unsafe { k[8].Anonymous.ki.wVk }, VK_RETURN);
+        assert_eq!(k.len(), (4 + 2) * 2 + 4);
+        assert_eq!(unsafe { k[8].Anonymous.ki.wVk }, VK_SHIFT); // Shift+Enter: never sends a chat message
+        assert_eq!(unsafe { k[9].Anonymous.ki.wVk }, VK_RETURN);
         assert_eq!(keystrokes("😀").len(), 4); // surrogate pair
-        assert_eq!(keystrokes("a\r\nb").len(), 6);
+        assert_eq!(keystrokes("a\r\nb").len(), 8);
     }
 
     #[test]

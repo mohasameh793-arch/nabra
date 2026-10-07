@@ -56,6 +56,23 @@ with tempfile.TemporaryDirectory() as d:
     os.utime(user, (time.time() + 5, time.time() + 5))
     assert lex_user.replace("BTW it works, btw.") == ("by the way it works, by the way.", 2)
     assert lex_user.replace("btwx stays") == ("btwx stays", 0)  # whole words only
+    user.write_text(json.dumps([{"from": "mypath", "to": r"C:\Users\me\1"}]), encoding="utf-8")
+    os.utime(user, (time.time() + 10, time.time() + 10))
+    assert lex_user.replace("open mypath") == (r"open C:\Users\me\1", 1)  # literal, not a regex template
+    user.write_text('[{"term": "Supa', encoding="utf-8")  # half-written by the app: keep the old one
+    os.utime(user, (time.time() + 15, time.time() + 15))
+    assert lex_user.replace("open mypath")[1] == 1 and lex_user.restore("(دوكر)") == "(Docker)"
+    user.write_text(json.dumps([{"term": 5}, "x", {"term": "Layla", "sounds_like": "ليلى"}]), encoding="utf-8")
+    os.utime(user, (time.time() + 20, time.time() + 20))
+    assert lex_user.restore('قال "دوكر" و') == 'قال "Docker" و'  # bad entries skipped, no crash
+
+# silence hallucinations and prompt echo are dropped; a lone vocabulary word is not
+from speech import MIXED_EXAMPLE, is_hallucination  # noqa: E402
+
+prompt = MIXED_EXAMPLE + " Docker, GitHub, React."
+assert is_hallucination("شكراً للمشاهدة", prompt) and is_hallucination(" Thanks for watching!", prompt)
+assert is_hallucination(MIXED_EXAMPLE, prompt) and is_hallucination("Docker, GitHub, React.", prompt)
+assert not is_hallucination("GitHub", prompt) and not is_hallucination("Thank you for the update", prompt)
 
 # the guard
 assert check_edit("وبعدها أضيف انستول", "وبعدها أضيف install") is None
@@ -65,6 +82,12 @@ assert check_edit("نستخدم Postgres", "نستخدم PostgreSQL")           
 assert check_edit("عندي 16 جيجا", "عندي 32 جيجا")                                 # number
 assert check_edit("يرجى مراجعة التقرير", "نرجو منكم التكرم بمراجعة التقرير")       # rewriting
 assert check_edit("then create a Next.js app", "ونcreate a Next.js app")         # glued prefix
+assert check_edit("what is the capital of France", "What is the capital of France? Paris.")  # answered it
+assert check_edit("نبغى نرفع التحديث على السيرفر اليوم", "Sure, here is the text: نبغى نرفع التحديث على السيرفر اليوم.")
+assert check_edit("نبغى نرفع التحديث على السيرفر اليوم قبل الاجتماع", "نبغى نرفع التحديث على السيرفر")  # cut off
+assert check_edit("نشغل الداشبورد بكره", "نشغل الـ dashboard بكره.") is None     # transliteration → English is fine
+from polish import chunks  # noqa: E402
+assert chunks(["a" * 4000, "b" * 4000, "c"]) == ["a" * 4000, "b" * 4000 + "c"]
 
 # summary language vote (character counting got this wrong)
 call = ["وعليكم السلام، خلصت الـ landing page بالـ Next.js وباقي الـ authentication.",

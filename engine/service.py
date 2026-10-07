@@ -47,6 +47,7 @@ class Engine:
         self.llm = Llm(llm_url) if llm_url else None
         self.keep_clips = keep_clips
         self.gpu = Lock()  # one decode at a time; dictation and call notes share the GPU
+        self.clips_lock = Lock()
         self.voices = Voices(voice_model)
 
     def dictate(self, wav: bytes, langs: list[str], mode: str, style: str = "formal") -> dict:
@@ -65,8 +66,8 @@ class Engine:
                         text = cleaned
                     else:
                         log.info("cleanup rejected: %s", reason.split(" [")[0])  # reason only, no words
-                except httpx.HTTPError as err:
-                    log.warning("LLM unavailable (%s); using lexicon output", type(err).__name__)
+                except (httpx.HTTPError, KeyError, TypeError, ValueError) as err:  # incl. a cut-off or malformed reply
+                    log.warning("LLM cleanup failed (%s); using lexicon output", type(err).__name__)
             text, replaced = self.lexicon.replace(text)
             fixes["dictionary"] += replaced
             text, _ = spoken_breaks(text)
@@ -117,16 +118,17 @@ class Engine:
     def _keep(self, wav: bytes, result: dict) -> None:
         """Opt-in (--keep-clips): your own dictations become benchmark clips to review later."""
         self.keep_clips.mkdir(parents=True, exist_ok=True)
-        clip = time.strftime("real-%Y%m%d-%H%M%S")
-        (self.keep_clips / f"{clip}.wav").write_bytes(wav)
+        clip = time.strftime("real-%Y%m%d-%H%M%S") + f"-{time.time_ns() % 10**9:09d}"  # two in one second
         row = {"id": clip, "audio": f"{clip}.wav", "text": result["text"], "stt": result["raw"],
                "terms": [], "tags": ["real", "unreviewed"]}
-        with open(self.keep_clips / "manifest.jsonl", "a", encoding="utf-8") as f:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        with self.clips_lock:
+            (self.keep_clips / f"{clip}.wav").write_bytes(wav)
+            with open(self.keep_clips / "manifest.jsonl", "a", encoding="utf-8") as f:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 TOKEN = os.environ.get("NABRA_TOKEN", "")
-MAX_BODY = 64 * 1024 * 1024  # a 5-minute dictation is ~10 MB
+MAX_BODY = 64 * 1024 * 1024  # the app sends 16-bit mono at the mic's rate: a 10-minute take at 48 kHz is ~58 MB
 
 
 def health_proof() -> str:
@@ -135,12 +137,15 @@ def health_proof() -> str:
 
 def handler_for(engine: Engine):
     class Handler(BaseHTTPRequestHandler):
+        timeout = 30  # a client that stalls mid-upload frees its thread instead of holding it forever
+
         def allowed(self) -> bool:
             host = (self.headers.get("Host") or "").split(":")[0].lower()
             if host not in ("127.0.0.1", "localhost"):
                 self.reply(403, {"error": "forbidden"})
                 return False
-            if TOKEN and not hmac.compare_digest(self.headers.get("X-Nabra-Token", ""), TOKEN):
+            sent = self.headers.get("X-Nabra-Token", "").encode("utf-8", "replace")  # bytes: non-ASCII can't raise
+            if TOKEN and not hmac.compare_digest(sent, TOKEN.encode()):
                 self.reply(401, {"error": "unauthorized"})
                 return False
             return True
@@ -164,13 +169,24 @@ def handler_for(engine: Engine):
         def do_POST(self):
             url = urlparse(self.path)
             q = parse_qs(url.query)
-            langs = [c for c in q.get("langs", [""])[0].split(",") if c]
+            langs = [c for c in q.get("langs", [""])[0].split(",") if c in engine.speech.model.supported_languages]
             if not self.allowed():
                 return
-            size = int(self.headers.get("Content-Length") or 0)
+            size = self.headers.get("Content-Length") or ""
+            size = int(size) if size.isdecimal() else 0
+            if size <= 0:  # missing, chunked, malformed, negative (read(-1) waits for EOF) or empty
+                return self.reply(400, {"error": "bad request"})
             if size > MAX_BODY:
                 return self.reply(413, {"error": "too large"})
             body = self.rfile.read(size)
+            req = {}
+            if url.path in ("/transform", "/catchup", "/ask", "/summary"):
+                try:
+                    req = json.loads(body)
+                except ValueError:
+                    req = None
+                if not isinstance(req, dict):
+                    return self.reply(400, {"error": "bad request"})
             try:
                 if url.path == "/dictate":
                     self.reply(200, engine.dictate(body, langs, q.get("mode", ["clean"])[0], q.get("style", ["formal"])[0]))

@@ -12,12 +12,12 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter, Manager};
-use windows::Win32::UI::Input::KeyboardAndMouse::{VIRTUAL_KEY, VK_BACK, VK_LEFT};
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VIRTUAL_KEY, VK_BACK, VK_LEFT, VK_RIGHT, VK_RMENU};
 
 use crate::keyboard::{self, talk_key_label, Shortcut, COMMAND_KEY_LABEL, NOTES_KEY_LABEL};
 use crate::pill::{self, View};
 use crate::sound::{lift_quiet, wav, Source, Tap};
-use crate::store::{now_ms, Dictation};
+use crate::store::Dictation;
 use crate::{sidecar, App};
 
 /// Inputs to the controller.
@@ -54,6 +54,9 @@ const REVEAL_FOR: Duration = Duration::from_secs(60);
 /// A forgotten hands-free dictation stops itself (and is transcribed) after this long.
 const MAX_TAKE: Duration = Duration::from_secs(5 * 60);
 const MAX_LISTEN: Duration = Duration::from_secs(10 * 60);
+/// "scratch that" / "make it shorter" only reach back this far: after that the user has likely typed or moved
+/// the cursor, and Backspace / Shift+Left would hit their own text.
+const LAST_FOR: Duration = Duration::from_secs(30);
 
 struct Take {
     tap: Tap,
@@ -71,6 +74,7 @@ struct Take {
 struct Inserted {
     window: isize,
     text: String,
+    at: Instant,
 }
 
 pub struct Controller {
@@ -142,8 +146,15 @@ impl Controller {
 
     fn begin_take(&mut self, hands_free: bool, command: bool, listen: bool) {
         if !self.ready {
-            let why = self.engine_error.clone().unwrap_or_else(|| "Still starting the speech engine…".into());
-            return self.problem(why);
+            if self.engine_error.is_none() {
+                return self.problem("Still starting the speech engine…");
+            }
+            // It failed to start earlier (driver reset, slow model load): try again rather than stay dead.
+            self.render(View::Working { label: "Restarting the speech engine…".into() });
+            return match self.start_engine() {
+                Ok(_) => self.problem("The speech engine restarted. Please try again."),
+                Err(e) => self.problem(e),
+            };
         }
         let mic = self.state().settings.lock().unwrap().microphone.clone();
         let opened = if listen { Tap::open(Source::System, None) } else { Tap::open(Source::Mic, mic.as_deref()) };
@@ -161,6 +172,7 @@ impl Controller {
                     command,
                     listen,
                 });
+                self.state().busy.store(true, std::sync::atomic::Ordering::SeqCst); // no update mid-dictation
                 self.hold_until = None;
                 self.render(View::Listening { seconds: 0.0, level: 0.0, hands_free: hands_free || listen, command });
             }
@@ -196,11 +208,10 @@ impl Controller {
             let s = state.settings.lock().unwrap();
             (s.langs(), s.mode.clone(), s.styles.for_kind(take.app_kind).to_string())
         };
-        let result = match sidecar::dictate(&audio, &langs, &mode, &style) {
-            Ok(r) if r.text.trim().is_empty() => return self.problem("Didn't catch that. Try again."),
-            Ok(r) => r,
-            Err(e) => return self.engine_failed(e),
-        };
+        let Some(result) = self.call_engine(|| sidecar::dictate(&audio, &langs, &mode, &style)) else { return };
+        if result.text.trim().is_empty() {
+            return self.problem("Didn't catch that. Try again.");
+        }
 
         // Type into the app the user started in; if they switched away, use the clipboard instead.
         // Typed where the cursor is: nothing more to show (like Flow). Only a clipboard fallback is worth a note.
@@ -214,12 +225,12 @@ impl Controller {
         } else if let Err(e) = keyboard::type_text(&result.text) {
             Some(clipboard(e))
         } else {
-            self.last = Some(Inserted { window: take.window, text: result.text.clone() });
+            self.last = Some(Inserted { window: take.window, text: result.text.clone(), at: Instant::now() });
             None
         };
 
         let entry = Dictation {
-            id: now_ms(),
+            id: crate::store::new_id(),
             app: take.app_name,
             words: result.text.split_whitespace().count() as u32,
             text: result.text.clone(),
@@ -251,23 +262,39 @@ impl Controller {
     fn heard(&mut self, audio: &[u8]) {
         self.render(View::Busy);
         let langs = self.state().settings.lock().unwrap().langs();
-        match sidecar::note_chunk(audio, &langs, false) {
-            Ok(text) if text.trim().is_empty() => self.problem("Didn't hear any speech playing."),
-            Ok(text) => self.flash(View::Reveal { title: "What was playing".into(), text, note: None, t: 0.0 }, REVEAL_FOR),
-            Err(e) => self.engine_failed(e),
+        match self.call_engine(|| sidecar::note_chunk(audio, &langs, false)) {
+            Some(text) if text.trim().is_empty() => self.problem("Didn't hear any speech playing."),
+            Some(text) => self.flash(View::Reveal { title: "What was playing".into(), text, note: None, t: 0.0 }, REVEAL_FOR),
+            None => {}
         }
     }
 
-    /// The engine stopped answering (it crashed, or a GPU error took it down): start it again once.
-    fn engine_failed(&mut self, error: String) {
-        if !error.contains("isn't running") {
-            return self.problem(error);
+    /// Runs an engine request. If the engine is gone (it crashed, or a GPU error took it down), starts it again
+    /// and repeats the request once with the same audio, so a long dictation isn't lost. On failure the problem
+    /// is shown and None returned.
+    fn call_engine<T>(&mut self, call: impl Fn() -> Result<T, String>) -> Option<T> {
+        let mut result = call();
+        if result.as_ref().is_err_and(|e| e == sidecar::ENGINE_DOWN) {
+            crate::log("engine stopped answering: restarting it");
+            self.render(View::Working { label: "Restarting the speech engine…".into() });
+            result = self.start_engine().and_then(|_| call());
         }
-        self.render(View::Working { label: "Restarting the speech engine…".into() });
-        match self.start_engine() {
-            Ok(_) => self.problem("The speech engine restarted. Please try again."),
-            Err(e) => self.problem(e),
+        match result {
+            Ok(v) => Some(v),
+            Err(e) => {
+                // e.g. llama-server died: refresh what the hub shows instead of claiming local AI is still on.
+                if let Some(health) = self.ready.then(sidecar::health).flatten() {
+                    self.engine_up(health);
+                }
+                self.problem(e);
+                None
+            }
         }
+    }
+
+    fn engine_up(&mut self, health: sidecar::Health) {
+        let _ = self.app.emit("engine", &health);
+        *self.state().engine.lock().unwrap() = Some(health);
     }
 
     /// Starts (or restarts) the engine and waits until it answers.
@@ -289,8 +316,7 @@ impl Controller {
         let result = launched.and_then(|_| sidecar::wait_ready(Duration::from_secs(240)));
         match &result {
             Ok(health) => {
-                *self.state().engine.lock().unwrap() = Some(health.clone());
-                let _ = self.app.emit("engine", health);
+                self.engine_up(health.clone());
                 self.ready = true;
                 self.engine_error = None;
             }
@@ -332,17 +358,15 @@ impl Controller {
     fn command(&mut self, take: Take, audio: &[u8]) {
         self.render(View::Working { label: "Listening to your command…".into() });
         let langs = self.state().settings.lock().unwrap().langs();
-        let (instruction, action) = match sidecar::instruction(audio, &langs) {
-            Ok(r) => r,
-            Err(e) => return self.engine_failed(e),
-        };
+        let Some((instruction, action)) = self.call_engine(|| sidecar::instruction(audio, &langs)) else { return };
         if action == "ask" {
             return self.ask(instruction); // a question: no text to edit, any window is fine
         }
         if keyboard::focused_window() != take.window {
             return self.problem("You switched windows, so the command was skipped");
         }
-        let last_here = self.last.as_ref().filter(|l| l.window == take.window).map(|l| l.text.clone());
+        let last_here =
+            self.last.as_ref().filter(|l| l.window == take.window && l.at.elapsed() < LAST_FOR).map(|l| l.text.clone());
         match action.as_str() {
             "none" => self.problem("Didn't catch the command. Try again."),
             "delete_last" => match last_here {
@@ -374,11 +398,13 @@ impl Controller {
         // Target: what the user selected; otherwise the last thing Nabra typed in this window.
         // ponytail: with nothing selected, some editors (VS Code) copy the whole line on Ctrl+C; that line
         // then becomes the target. Select text first for precise edits.
+        let mut selected_back = false;
         let target = match keyboard::selected_text() {
             Some(sel) => sel,
             None => match last_here {
                 Some(text) => {
                     keyboard::press(VK_LEFT, false, true, keyboard::visible_len(&text)); // select it back
+                    selected_back = true;
                     text
                 }
                 None => return self.problem(format!("Select some text first, then hold {COMMAND_KEY_LABEL} and say what to do")),
@@ -391,12 +417,19 @@ impl Controller {
                     let _ = keyboard::copy(&out);
                     return self.problem(format!("{e}, so the result is on your clipboard"));
                 }
-                self.last = Some(Inserted { window: take.window, text: out.clone() });
+                self.last = Some(Inserted { window: take.window, text: out.clone(), at: Instant::now() });
                 *self.state().last_text.lock().unwrap() = out.clone();
                 self.done(out, "Transformed")
             }
-            Ok(_) => self.problem("The AI returned nothing. Your text is unchanged."),
-            Err(e) => self.problem(e),
+            failed => {
+                if selected_back {
+                    keyboard::press(VK_RIGHT, false, false, 1); // unselect it, so the next keystroke can't replace it
+                }
+                match failed {
+                    Ok(_) => self.problem("The AI returned nothing. Your text is unchanged."),
+                    Err(e) => self.problem(e),
+                }
+            }
         }
     }
 
@@ -441,6 +474,7 @@ impl Controller {
         }
 
         loop {
+            let t0 = Instant::now();
             // Updates wait while a dictation or voice command is in progress.
             self.state().busy.store(self.take.is_some(), std::sync::atomic::Ordering::SeqCst);
             // A prompt that arrived mid-dictation is shown now (it was never dropped).
@@ -481,7 +515,8 @@ impl Controller {
                         self.begin(true, false)
                     }
                 }
-                Ok(Control::Key(Shortcut::NotesToggle)) | Ok(Control::NotesClicked) => self.toggle_notes(),
+                // Not mid-take: it would draw over the Listening view and fight the take for the mic.
+                Ok(Control::Key(Shortcut::NotesToggle)) | Ok(Control::NotesClicked) if self.take.is_none() => self.toggle_notes(),
                 Ok(Control::MeetingStarting(title)) if self.take.is_none() => {
                     self.flash(View::Meeting { title }, MEETING_PROMPT_FOR)
                 }
@@ -511,6 +546,9 @@ impl Controller {
                 Ok(_) => {}
                 Err(RecvTimeoutError::Timeout) => match &self.take {
                     Some(t) if t.started.elapsed() > if t.listen { MAX_LISTEN } else { MAX_TAKE } => self.finish(),
+                    Some(t) if !t.hands_free && t.started.elapsed() > Duration::from_secs(1) && hold_key_up(t.command) => {
+                        self.finish()
+                    }
                     Some(t) => {
                         let view = View::Listening {
                             seconds: t.started.elapsed().as_secs_f32(),
@@ -524,6 +562,26 @@ impl Controller {
                 },
                 Err(RecvTimeoutError::Disconnected) => break,
             }
+            // Clicks and key presses queued while Nabra was busy (transcribing, restarting the engine) would start
+            // an unwanted recording if replayed now: drop them, keep everything else in order.
+            if self.take.is_none() && t0.elapsed() > Duration::from_millis(300) {
+                while let Ok(c) = inbox.try_recv() {
+                    if !matches!(c, Control::MicClicked | Control::Key(Shortcut::TalkPressed | Shortcut::CommandPressed)) {
+                        self.deferred.push(c);
+                    }
+                }
+            }
         }
     }
+}
+
+/// The hold key is physically up though its release never arrived (Win+L, a UAC prompt, a hook timeout).
+/// Swallowed talk keys (Caps Lock…) never show as held to other code, so those can't be checked this way.
+fn hold_key_up(command: bool) -> bool {
+    let (vk, swallowed) = if command {
+        (VK_RMENU.0 as u32, false)
+    } else {
+        keyboard::TALK_KEYS.iter().find(|k| k.1 == talk_key_label()).map_or((0, true), |k| (k.2, k.3))
+    };
+    !swallowed && unsafe { GetAsyncKeyState(vk as i32) } >= 0
 }

@@ -1,7 +1,7 @@
 """Nabra engine.
 
     python engine --port 8770 [--dictionary FILE] [--snippets FILE] [--llm-url URL] [--keep-clips DIR]
-                  [--whisper MODEL_DIR_OR_NAME] [--cuda-dir DIR] [--voice-model ONNX]
+                  [--whisper MODEL_DIR_OR_NAME] [--cuda-dir DIR] [--voice-model ONNX] [--no-auth]
     python engine --mcp [--notes DIR]          read-only MCP server for call notes (stdio)
 """
 import argparse
@@ -21,7 +21,7 @@ def main() -> None:
     if "--voice-check" in sys.argv:  # build smoke test: the packaged voice model runtime works
         return voice_check(Path(sys.argv[sys.argv.index("--voice-check") + 1]))
 
-    from service import Engine, serve
+    from service import TOKEN, Engine, serve
 
     ap = argparse.ArgumentParser(prog="engine")
     ap.add_argument("--port", type=int, default=8770)
@@ -32,7 +32,10 @@ def main() -> None:
     ap.add_argument("--whisper", default="large-v3", help="local model folder or faster-whisper model name")
     ap.add_argument("--cuda-dir", type=Path, help="folder with cuBLAS/cuDNN DLLs downloaded by the app")
     ap.add_argument("--voice-model", type=Path, help="speaker-recognition ONNX model (call notes: who is speaking)")
+    ap.add_argument("--no-auth", action="store_true", help="dev only (bench/run.py): run without NABRA_TOKEN")
     args = ap.parse_args()
+    if not TOKEN and not args.no_auth:  # fail closed: without a token any local program or web page could use it
+        sys.exit("NABRA_TOKEN is required (the app sets it; use --no-auth for a local dev run)")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     serve(args.port, Engine(args.dictionary, args.snippets, args.llm_url, args.keep_clips, args.whisper, args.cuda_dir,
                             args.voice_model))

@@ -1,7 +1,7 @@
 //! Audio input. Two sources: a microphone (by name, or the Windows default) and the system output via
 //! WASAPI loopback ("what the other side of a call says"). A `Tap` exists only while recording.
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -19,6 +19,20 @@ pub struct Tap {
     pub rate: u32,
     samples: Arc<Mutex<Vec<f32>>>,
     level: Arc<AtomicU32>,
+    source: Source,
+    device: String,
+    follows_default: bool, // no device chosen in Settings (or it's gone): track Windows' default
+    failed: Arc<AtomicBool>,
+}
+
+fn default_device(source: Source) -> Option<String> {
+    let host = cpal::default_host();
+    match source {
+        Source::Mic => host.default_input_device(),
+        Source::System => host.default_output_device(),
+    }?
+    .name()
+    .ok()
 }
 
 pub fn microphones() -> Vec<String> {
@@ -32,37 +46,46 @@ impl Tap {
     /// `mic`: device name from Settings; None or not found → Windows default microphone.
     pub fn open(source: Source, mic: Option<&str>) -> Result<Tap, String> {
         let host = cpal::default_host();
-        let (device, config) = match source {
+        let (device, config, follows_default) = match source {
             Source::Mic => {
                 let named = mic.and_then(|want| {
                     host.input_devices().ok()?.find(|d| d.name().map(|n| n == want).unwrap_or(false))
                 });
+                let follows_default = named.is_none();
                 let device = named
                     .or_else(|| host.default_input_device())
                     .ok_or("No microphone found. Connect one or choose it in Settings → General.")?;
                 let config = device
                     .default_input_config()
                     .map_err(|e| format!("Can't use the microphone ({e}). Check Windows Settings → Privacy → Microphone."))?;
-                (device, config)
+                (device, config, follows_default)
             }
             Source::System => {
                 let device = host.default_output_device().ok_or("No speakers or headphones to capture the call from.")?;
                 // cpal turns an input stream on an output device into WASAPI loopback capture.
                 let config = device.default_output_config().map_err(|e| format!("Can't capture computer audio ({e})"))?;
-                (device, config)
+                (device, config, true)
             }
         };
         let samples: Arc<Mutex<Vec<f32>>> = Arc::default();
         let level: Arc<AtomicU32> = Arc::default();
+        let failed: Arc<AtomicBool> = Arc::default();
         let stream_config: cpal::StreamConfig = config.clone().into();
         let stream = match config.sample_format() {
-            cpal::SampleFormat::F32 => listen::<f32>(&device, &stream_config, &samples, &level),
-            cpal::SampleFormat::I16 => listen::<i16>(&device, &stream_config, &samples, &level),
-            cpal::SampleFormat::U16 => listen::<u16>(&device, &stream_config, &samples, &level),
+            cpal::SampleFormat::F32 => listen::<f32>(&device, &stream_config, &samples, &level, &failed),
+            cpal::SampleFormat::I16 => listen::<i16>(&device, &stream_config, &samples, &level, &failed),
+            cpal::SampleFormat::U16 => listen::<u16>(&device, &stream_config, &samples, &level, &failed),
             other => return Err(format!("Audio format {other:?} isn't supported")),
         }?;
         stream.play().map_err(|e| format!("Audio capture didn't start: {e}"))?;
-        Ok(Tap { _stream: stream, rate: config.sample_rate().0, samples, level })
+        let device = device.name().unwrap_or_default();
+        Ok(Tap { _stream: stream, rate: config.sample_rate().0, samples, level, source, device, follows_default, failed })
+    }
+
+    /// The device stopped (unplugged, Bluetooth dropped) or Windows switched the default device this tap follows:
+    /// reopen it, or that side of the call goes silent.
+    pub fn stale(&self) -> bool {
+        self.failed.load(Ordering::Relaxed) || self.follows_default && default_device(self.source).as_deref() != Some(&self.device)
     }
 
     /// RMS of the latest audio packet, for the level meter.
@@ -81,12 +104,13 @@ fn listen<T>(
     config: &cpal::StreamConfig,
     samples: &Arc<Mutex<Vec<f32>>>,
     level: &Arc<AtomicU32>,
+    failed: &Arc<AtomicBool>,
 ) -> Result<cpal::Stream, String>
 where
     T: SizedSample,
     f32: FromSample<T>,
 {
-    let (samples, level, channels) = (samples.clone(), level.clone(), config.channels as usize);
+    let (samples, level, failed, channels) = (samples.clone(), level.clone(), failed.clone(), config.channels as usize);
     device
         .build_input_stream(
             config,
@@ -101,7 +125,10 @@ where
                 let frames = (data.len() / channels).max(1) as f32;
                 level.store((energy / frames).sqrt().to_bits(), Ordering::Relaxed);
             },
-            |err| eprintln!("audio stream: {err}"),
+            move |err| {
+                eprintln!("audio stream: {err}");
+                failed.store(true, Ordering::Relaxed);
+            },
             None,
         )
         .map_err(|e| format!("Can't open the audio device: {e}"))

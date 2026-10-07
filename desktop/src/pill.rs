@@ -7,13 +7,14 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition};
+use tauri::{AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetWindowLongPtrW, IsWindowVisible, SetWindowLongPtrW, ShowWindow, GWL_EXSTYLE, SW_SHOWNOACTIVATE, WS_EX_NOACTIVATE,
-    WS_EX_TOOLWINDOW,
+    GetWindowLongPtrW, IsWindowVisible, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWL_EXSTYLE, HWND_TOPMOST,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_SHOWNOACTIVATE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
 };
 
+use crate::dictation::Control;
 use crate::App;
 
 /// What the pill shows. Serialized to the pill page as `{ "view": "...", ... }` (+ `"dock"`).
@@ -77,18 +78,18 @@ pub fn init(app: &AppHandle) {
         let style = GetWindowLongPtrW(h, GWL_EXSTYLE) | (WS_EX_NOACTIVATE.0 | WS_EX_TOOLWINDOW.0) as isize;
         SetWindowLongPtrW(h, GWL_EXSTYLE, style);
     }
-    let (lw, lh) = *SIZE.lock().unwrap();
-    place(app, lw, lh); // at its dock right away, not wherever Windows put the window
+    place(app, None); // at its dock right away, not wherever Windows put the window
     reveal(h);
     follow_mouse(app.clone());
 }
 
-/// Shows the pill without activating it (Tauri's show() would steal focus).
+/// Shows the pill without activating it (Tauri's show() would steal focus), above other topmost windows.
 fn reveal(h: HWND) {
     unsafe {
         if !IsWindowVisible(h).as_bool() {
             let _ = ShowWindow(h, SW_SHOWNOACTIVATE);
         }
+        let _ = SetWindowPos(h, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
 }
 
@@ -107,9 +108,12 @@ fn monitor(app: &AppHandle) -> Option<tauri::Monitor> {
     at.and_then(|p| app.monitor_from_point(p.x, p.y).ok().flatten()).or_else(|| app.primary_monitor().ok().flatten())
 }
 
-/// Moves the window to its dock on the mouse's monitor, at `(lw, lh)` logical size.
-fn place(app: &AppHandle, lw: f64, lh: f64) {
+/// Moves the window to its dock on the mouse's monitor, at `size` logical size (`None`: the current one).
+/// `SIZE` stays locked throughout so a re-dock can't put back a stale size while a new view is being shown.
+fn place(app: &AppHandle, size: Option<(f64, f64)>) {
     let (Some(w), Some(m)) = (app.get_webview_window("pill"), monitor(app)) else { return };
+    let mut current = SIZE.lock().unwrap();
+    let (lw, lh) = size.unwrap_or(*current);
     let scale = m.scale_factor();
     let area = m.work_area(); // the screen minus the taskbar
     let (ax, ay, aw, ah) = (area.position.x, area.position.y, area.size.width as i32, area.size.height as i32);
@@ -119,9 +123,12 @@ fn place(app: &AppHandle, lw: f64, lh: f64) {
         "bottom" => (ax + (aw - pw) / 2, ay + ah - ph - (BOTTOM_MARGIN * scale) as i32),
         _ => (ax + aw - pw - (MARGIN * scale) as i32, ay + (ah - ph) / 2),
     };
-    let _ = w.set_size(LogicalSize::new(lw, lh));
+    // Move first: crossing to a monitor with another scale makes Windows rescale the window, so the size
+    // (in the target monitor's pixels) is set once it is there, then the position again in case it shifted.
     let _ = w.set_position(PhysicalPosition::new(x, y));
-    *SIZE.lock().unwrap() = (lw, lh);
+    let _ = w.set_size(PhysicalSize::new(pw as u32, ph as u32));
+    let _ = w.set_position(PhysicalPosition::new(x, y));
+    *current = (lw, lh);
     *MONITOR.lock().unwrap() = Some((ax, ay, aw, ah));
 }
 
@@ -135,7 +142,12 @@ fn payload(app: &AppHandle, view: &View) -> serde_json::Value {
 pub fn show(app: &AppHandle, view: &View) {
     let (lw, lh) = view.size(&dock(app));
     if !DRAGGING.load(Ordering::SeqCst) {
-        place(app, lw, lh);
+        place(app, Some((lw, lh)));
+    } else if let Some(w) = app.get_webview_window("pill") {
+        // Mid-drag: resize (the drag keeps moving it) so the view isn't clipped; the drop docks it.
+        let mut current = SIZE.lock().unwrap();
+        let _ = w.set_size(LogicalSize::new(lw, lh));
+        *current = (lw, lh);
     }
     let v = payload(app, view);
     *LAST.lock().unwrap() = Some(v.clone());
@@ -155,13 +167,28 @@ fn follow_mouse(app: AppHandle) {
             continue;
         }
         let Some(m) = monitor(&app) else { continue };
-        // Re-dock when the mouse changes screen, or this screen's usable area changed (resolution, scaling,
-        // taskbar, a monitor unplugged), which would otherwise leave the pill off-screen.
-        let a = m.work_area();
-        let here = Some((a.position.x, a.position.y, a.size.width as i32, a.size.height as i32));
-        if *MONITOR.lock().unwrap() != here {
-            let (lw, lh) = *SIZE.lock().unwrap();
-            place(&app, lw, lh);
+        let area = |m: &tauri::Monitor| {
+            let a = m.work_area();
+            Some((a.position.x, a.position.y, a.size.width as i32, a.size.height as i32))
+        };
+        let here = area(&m);
+        // Where the window really is (Windows moves it when its monitor is unplugged).
+        let w = app.get_webview_window("pill");
+        let on = w.as_ref().and_then(|w| w.current_monitor().ok().flatten()).and_then(|m| area(&m));
+        // Re-dock when the mouse changes screen, this screen's usable area changed (resolution, scaling,
+        // taskbar), or the window ended up elsewhere, which would otherwise leave the pill off-screen.
+        if *MONITOR.lock().unwrap() != here || (on.is_some() && on != here) {
+            place(&app, None);
+        }
+        // The hover buttons close when the mouse leaves the window; don't rely on the page seeing it leave.
+        let hover = LAST.lock().unwrap().as_ref().is_some_and(|v| v["view"] == "hover");
+        if let (true, Some(w), Ok(p)) = (hover, &w, app.cursor_position()) {
+            if let (Ok(o), Ok(s)) = (w.outer_position(), w.outer_size()) {
+                let (x, y) = (p.x - o.x as f64, p.y - o.y as f64);
+                if x < 0.0 || y < 0.0 || x >= s.width as f64 || y >= s.height as f64 {
+                    app.state::<App>().tell(Control::Hover(false));
+                }
+            }
         }
         // Something (Explorer restarting, a display change) can hide the window: bring it back.
         if let Some(h) = hwnd(&app) {
@@ -221,8 +248,7 @@ fn snap(app: &AppHandle) {
     let last = LAST.lock().unwrap().clone();
     if let Some(mut v) = last {
         v["dock"] = nearest.into();
-        let (lw, lh) = size_of_payload(&v, nearest);
-        place(app, lw, lh);
+        place(app, Some(size_of_payload(&v, nearest)));
         let _ = app.emit_to("pill", "pill", v);
     }
 }

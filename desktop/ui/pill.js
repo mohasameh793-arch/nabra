@@ -23,6 +23,8 @@ const clock = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStar
 
 function render(v) {
   document.body.dataset.view = v.view;
+  // Rust closed the hover itself (the mouse left without this page noticing): let the next hover in count.
+  if (v.view === "idle" || v.view === "notes") hovering = false;
   document.body.dataset.dock = v.dock || "right";
   $("chev").textContent = v.dock === "right" || !v.dock ? "‹" : "›";
   $("msg").textContent = "";

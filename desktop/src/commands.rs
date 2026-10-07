@@ -44,9 +44,11 @@ fn save_settings(state: State<App>, settings: Settings) -> Res<Settings> {
     next.notes_consent = current.notes_consent;
     next.last_version = current.last_version.clone();
     state.store.save_settings(&next)?;
+    *current = next.clone(); // saved: memory follows the disk even if pruning fails below
     crate::keyboard::set_talk_key(&next.talk_key);
-    state.store.prune_history(&next.history_keep)?;
-    *current = next.clone();
+    if let Err(e) = state.store.prune_history(&next.history_keep) {
+        eprintln!("prune history: {e}"); // retried on the next save / launch; the settings themselves are saved
+    }
     Ok(next)
 }
 
@@ -127,6 +129,9 @@ fn save_pad(state: State<App>, pad: Pad) -> Res<Vec<Pad>> {
     if pad.body.len() > 1_000_000 {
         return Err("That pad is too large".into());
     }
+    if pad.id == 0 && state.store.pads().len() >= 1000 {
+        return Err("Too many pads: delete some first".into());
+    }
     state.store.save_pad(pad)
 }
 
@@ -153,6 +158,9 @@ fn calendar_events(state: State<App>) -> Vec<calendar::Event> {
 #[tauri::command]
 async fn connect_calendar(app: AppHandle, url: String) -> Res<usize> {
     let url = url.trim().to_string();
+    if url.len() > 2000 {
+        return Err("That link is too long".into());
+    }
     blocking(move || {
         let ics = calendar::fetch(&url)?;
         if !ics.contains("BEGIN:VCALENDAR") {
@@ -322,9 +330,7 @@ fn save_thoughts(state: State<App>, id: String, text: String) -> Res<()> {
         m.set_thoughts(text);
         return Ok(());
     }
-    let mut note = state.store.note(&id)?;
-    note.thoughts = text;
-    state.store.save_note(&note)
+    state.store.update_note(&id, |n| n.thoughts = text).map(|_| ())
 }
 
 #[tauri::command]
@@ -375,6 +381,7 @@ fn name_speaker(app: AppHandle, id: String, speaker: String, name: String) -> Re
 async fn add_attendees(app: AppHandle, id: String, names: Vec<String>, scan: bool) -> Res<()> {
     blocking(move || {
         let mut names = names;
+        names.truncate(100);
         if scan {
             names.extend(crate::attendees::scan());
         }

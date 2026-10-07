@@ -4,38 +4,69 @@
 use std::os::windows::io::AsRawHandle;
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::sync::OnceLock;
+use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 use serde_json::{json, Value};
-use windows::Win32::Foundation::HANDLE;
+use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation, SetInformationJobObject,
-    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
 };
 
-const ENGINE: &str = "http://127.0.0.1:8770";
-const LLM_PORT: u16 = 8771;
+/// The engine's port: 8770 unless something else holds it (another Nabra, a dev server), then any free one.
+static ENGINE_PORT: AtomicU16 = AtomicU16::new(8770);
+/// The job holding the running engine and llama-server (as a raw handle), and the engine process itself.
+static JOB: Mutex<Option<usize>> = Mutex::new(None);
+static ENGINE_CHILD: Mutex<Option<Child>> = Mutex::new(None);
+/// What callers match on to restart the engine: it's gone, not just slow.
+pub const ENGINE_DOWN: &str = "The speech engine isn't running.";
 const NO_WINDOW: u32 = 0x0800_0000;
 /// Without a GPU the engine works the processor hard: keep the PC responsive by letting other apps go first.
 const BELOW_NORMAL_PRIORITY: u32 = 0x0000_4000;
 
-/// A secret made fresh at every launch and given only to our own engine and llama-server (environment /
-/// --api-key). Every request carries it, so no other program or web page can use them, and the engine proves
-/// it knows it on /health, so another program squatting on the port is never trusted.
+/// 32 bytes from the OS's secure random source, as hex.
+fn random_hex() -> String {
+    #[link(name = "bcrypt", kind = "raw-dylib")]
+    extern "system" {
+        fn BCryptGenRandom(alg: *mut std::ffi::c_void, buf: *mut u8, len: u32, flags: u32) -> i32;
+    }
+    const BCRYPT_USE_SYSTEM_PREFERRED_RNG: u32 = 2;
+    let mut buf = [0u8; 32];
+    let status = unsafe { BCryptGenRandom(std::ptr::null_mut(), buf.as_mut_ptr(), 32, BCRYPT_USE_SYSTEM_PREFERRED_RNG) };
+    assert!(status >= 0, "BCryptGenRandom failed: {status:#x}");
+    buf.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// A secret made fresh at every launch and given only to our own engine (environment). Every request carries
+/// it, so no other program or web page can use the engine, and the engine proves it knows it on /health, so
+/// another program squatting on the port is never trusted.
 fn token() -> &'static str {
     static TOKEN: OnceLock<String> = OnceLock::new();
-    TOKEN.get_or_init(|| {
-        use std::hash::{BuildHasher, Hasher};
-        // RandomState is seeded from the OS's secure random source; four of them give 256 random bits.
-        (0..4).map(|i| {
-            let mut h = std::collections::hash_map::RandomState::new().build_hasher();
-            h.write_u64(i);
-            format!("{:016x}", h.finish())
-        }).collect()
-    })
+    TOKEN.get_or_init(random_hex)
+}
+
+/// llama-server's API key, separate from the engine token, so whoever learns one can't use the other.
+fn llm_key() -> &'static str {
+    static KEY: OnceLock<String> = OnceLock::new();
+    KEY.get_or_init(random_hex)
+}
+
+fn engine_url() -> String {
+    format!("http://127.0.0.1:{}", ENGINE_PORT.load(Ordering::SeqCst))
+}
+
+/// `preferred` if nothing is listening on it, else a free port the OS picks.
+fn free_port(preferred: u16) -> u16 {
+    use std::net::TcpListener;
+    TcpListener::bind(("127.0.0.1", preferred))
+        .or_else(|_| TcpListener::bind(("127.0.0.1", 0)))
+        .and_then(|l| l.local_addr())
+        .map(|a| a.port())
+        .unwrap_or(preferred)
 }
 
 /// HMAC-SHA256(token, message) as hex: what our engine answers on /health.
@@ -55,7 +86,7 @@ fn hmac_hex(secret: &[u8], message: &[u8]) -> String {
 }
 
 fn post(path: &str) -> ureq::Request {
-    ureq::post(&format!("{ENGINE}{path}")).set("X-Nabra-Token", token())
+    ureq::post(&format!("{}{path}", engine_url())).set("X-Nabra-Token", token())
 }
 
 /// Source checkout root (the repo this binary was built from), or NABRA_ROOT. Only used when the app runs
@@ -100,27 +131,42 @@ fn job() -> Result<HANDLE, String> {
             size_of_val(&limits) as u32,
         )
         .map_err(|e| e.to_string())?;
-        Ok(job) // kept open for the app's lifetime on purpose
+        Ok(job) // kept open until the next start (or the app's exit) on purpose
     }
 }
 
-fn launch(job: HANDLE, exe: &Path, args: &[String], cwd: &Path, log: &Path, flags: u32) -> Result<(), String> {
+/// Kills the engine and llama-server an earlier `start` left running, and waits for the engine to exit.
+fn stop() {
+    if let Some(job) = JOB.lock().unwrap().take() {
+        let job = HANDLE(job as *mut _);
+        unsafe {
+            let _ = TerminateJobObject(job, 1);
+            let _ = CloseHandle(job);
+        }
+    }
+    if let Some(mut child) = ENGINE_CHILD.lock().unwrap().take() {
+        let _ = child.wait();
+    }
+}
+
+fn launch(job: HANDLE, exe: &Path, args: &[String], cwd: &Path, log: &Path, flags: u32, envs: &[(&str, &str)]) -> Result<Child, String> {
     let out = std::fs::File::create(log).map_err(|e| e.to_string())?;
-    let child = Command::new(exe)
+    let mut child = Command::new(exe)
         .args(args)
         .current_dir(cwd)
         .env("PYTHONIOENCODING", "utf-8")
-        .env("NABRA_TOKEN", token())
-        .env("NABRA_LLM_KEY", token())
+        .envs(envs.iter().copied())
         .stdin(Stdio::null())
         .stdout(out.try_clone().map_err(|e| e.to_string())?)
         .stderr(out)
         .creation_flags(NO_WINDOW | flags)
         .spawn()
         .map_err(|e| format!("Couldn't start {}: {e}", exe.display()))?;
-    unsafe { AssignProcessToJobObject(job, HANDLE(child.as_raw_handle())) }.map_err(|e| e.to_string())?;
-    std::mem::forget(child); // the job object owns its lifetime
-    Ok(())
+    if let Err(e) = unsafe { AssignProcessToJobObject(job, HANDLE(child.as_raw_handle())) } {
+        let _ = child.kill(); // outside the job it would outlive Nabra
+        return Err(e.to_string());
+    }
+    Ok(child) // the job object owns its lifetime; the handle only lets us see it exit
 }
 
 pub struct Launch<'a> {
@@ -134,11 +180,15 @@ pub fn start(app: &tauri::AppHandle, opts: Launch) -> Result<(), String> {
     use crate::assets::{self, Part};
     let logs = logs_dir();
     std::fs::create_dir_all(&logs).map_err(|e| e.to_string())?;
-    let job = job()?;
+    stop(); // a restart replaces the old engine and llama-server, never runs beside them
     let (program, mut args, cwd) = engine_command(app)?;
+    let job = job()?;
+    *JOB.lock().unwrap() = Some(job.0 as usize);
+    let port = free_port(8770);
+    ENGINE_PORT.store(port, Ordering::SeqCst);
     args.extend([
         "--port".into(),
-        "8770".into(),
+        port.to_string(),
         "--dictionary".into(),
         opts.dictionary.display().to_string(),
         "--snippets".into(),
@@ -157,11 +207,17 @@ pub fn start(app: &tauri::AppHandle, opts: Launch) -> Result<(), String> {
         args.extend(["--cuda-dir".into(), assets::cuda().display().to_string()]);
     }
     if Part::Llama.installed() && Part::Qwen.installed() {
+        let llm_port = free_port(8771);
+        // The key goes in the environment (LLAMA_API_KEY), not the command line other programs can read.
         let llm = ["-m", &assets::qwen().display().to_string(), "-ngl", "99", "-c", "8192", "--host", "127.0.0.1",
-            "--port", &LLM_PORT.to_string(), "--jinja", "--api-key", token()];
+            "--port", &llm_port.to_string(), "--jinja"];
         let llama = assets::llama_server();
-        launch(job, &llama, &llm.map(String::from), llama.parent().unwrap(), &logs.join("llama.log"), 0)?;
-        args.extend(["--llm-url".into(), format!("http://127.0.0.1:{LLM_PORT}")]);
+        let envs = [("LLAMA_API_KEY", llm_key())];
+        // Local AI is optional: if it can't start, dictation still works without it.
+        match launch(job, &llama, &llm.map(String::from), llama.parent().unwrap(), &logs.join("llama.log"), 0, &envs) {
+            Ok(_) => args.extend(["--llm-url".into(), format!("http://127.0.0.1:{llm_port}")]),
+            Err(e) => crate::log(format!("local AI didn't start: {e}")),
+        }
     }
     if opts.keep_clips {
         args.extend(["--keep-clips".into(), opts.clips.display().to_string()]);
@@ -169,7 +225,17 @@ pub fn start(app: &tauri::AppHandle, opts: Launch) -> Result<(), String> {
     // Downloaded in the background on first run (see assets::ensure_voice_model); loaded on first use.
     args.extend(["--voice-model".into(), assets::voice_model().display().to_string()]);
     let flags = if Part::WhisperGpu.installed() { 0 } else { BELOW_NORMAL_PRIORITY };
-    launch(job, &program, &args, &cwd, &logs.join("engine.log"), flags)
+    let envs = [("NABRA_TOKEN", token()), ("NABRA_LLM_KEY", llm_key())];
+    match launch(job, &program, &args, &cwd, &logs.join("engine.log"), flags, &envs) {
+        Ok(child) => {
+            *ENGINE_CHILD.lock().unwrap() = Some(child);
+            Ok(())
+        }
+        Err(e) => {
+            stop(); // don't leave llama-server running without its engine
+            Err(e)
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, serde::Serialize)]
@@ -182,7 +248,7 @@ pub struct Health {
 
 /// Our engine's health, or None if nothing answers, or if whatever answers can't prove it's ours.
 pub fn health() -> Option<Health> {
-    let h: Health = ureq::get(&format!("{ENGINE}/health"))
+    let h: Health = ureq::get(&format!("{}/health", engine_url()))
         .set("X-Nabra-Token", token())
         .timeout(Duration::from_secs(2))
         .call()
@@ -198,6 +264,16 @@ pub fn wait_ready(limit: Duration) -> Result<Health, String> {
         if let Some(h) = health() {
             return Ok(h);
         }
+        // It died while loading (port taken, missing DLL, antivirus, bad model): say so now, not after `limit`.
+        let exited = ENGINE_CHILD.lock().unwrap().as_mut().and_then(|c| c.try_wait().ok().flatten());
+        if let Some(status) = exited {
+            let log = logs_dir().join("engine.log");
+            let last = std::fs::read_to_string(&log)
+                .ok()
+                .and_then(|s| s.lines().rev().find(|l| !l.trim().is_empty()).map(str::to_owned))
+                .unwrap_or_default();
+            return Err(format!("The speech engine stopped ({status}). {last} Details: {}", log.display()));
+        }
         if t0.elapsed() > limit {
             return Err(format!("The speech engine didn't start. Details: {}", logs_dir().join("engine.log").display()));
         }
@@ -211,7 +287,9 @@ fn explain(e: ureq::Error) -> String {
         ureq::Error::Status(code, _) => {
             format!("The speech engine hit an error ({code}). Details: {}", logs_dir().join("engine.log").display())
         }
-        ureq::Error::Transport(_) => "The speech engine isn't running.".into(),
+        // A slow job times out too: only call the engine down (and restart it) if it no longer answers /health.
+        ureq::Error::Transport(_) if health().is_none() => ENGINE_DOWN.into(),
+        ureq::Error::Transport(_) => "The speech engine took too long to answer. Please try again.".into(),
     }
 }
 

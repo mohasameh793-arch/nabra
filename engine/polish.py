@@ -12,6 +12,9 @@ CLEANUP_RULES = """You fix dictated text. The speaker mixes Arabic (any dialect)
   but only when you are sure (كوبرنيتيس → Kubernetes, الداشبورد → الـ dashboard).
 - Before an English word, write the Arabic article as "الـ " (الـ API، للـ app، بالـ React).
 - Fix punctuation and capitalization. Do not rephrase, reorder, add, remove, or correct grammar.
+- When the speaker lists three or more separate items (questions, steps, tasks, points), keep the lead-in
+  sentence, then put each item on its own line starting with "- ", in the order spoken. Text after the list
+  goes on a new line. Never turn a normal sentence into a list.
 - When unsure, leave the word as it is.
 Reply with the fixed text only."""
 
@@ -20,6 +23,8 @@ CLEANUP_EXAMPLES = [
     ("وش رايك نرفع الكونتينر على السيرفر الجديد بكره", "وش رايك نرفع الـ container على السيرفر الجديد بكره؟"),
     ("can you send me the slides before the meeting", "Can you send me the slides before the meeting?"),
     ("نرجو منكم الحضور في الموعد المحدد", "نرجو منكم الحضور في الموعد المحدد."),
+    ("for the trip I need to pack the charger the passport and the tickets then call the hotel",
+     "For the trip I need to pack:\n- The charger\n- The passport\n- The tickets\nThen call the hotel."),
 ]
 
 SUMMARY_RULES = """You summarize a call transcript. Lines start with ME (the user), a person's name, or THEM (someone
@@ -58,21 +63,26 @@ class Llm:
         except httpx.HTTPError:
             return False
 
-    def chat(self, messages: list[dict], max_tokens: int, reasoning: bool = False, timeout: float = 60) -> str:
+    def chat(self, messages: list[dict], max_tokens: int, reasoning: bool = False, timeout: float = 60,
+             whole: bool = False) -> str:
+        """whole: the reply replaces the user's text, so one cut off at max_tokens raises instead of being returned."""
         r = self.http.post(f"{self.base_url}/v1/chat/completions", timeout=timeout, json={
             "messages": messages, "temperature": 0, "max_tokens": max_tokens,
             "chat_template_kwargs": {"enable_thinking": reasoning},
         })
         r.raise_for_status()
-        text = r.json()["choices"][0]["message"]["content"]
-        return re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()
+        choice = r.json()["choices"][0]
+        if whole and choice.get("finish_reason") == "length":
+            raise ValueError("LLM reply was cut off")
+        text = re.sub(r"<think>.*?</think>", "", choice["message"]["content"], flags=re.S)
+        return re.sub(r"<think>.*", "", text, flags=re.S).strip()  # reasoning cut off before </think>: drop it
 
     def cleanup(self, text: str, vocabulary: list[str]) -> str:
         messages = [{"role": "system", "content": f"{CLEANUP_RULES}\nPreferred spellings: {', '.join(vocabulary)}"}]
         for before, after in CLEANUP_EXAMPLES:
             messages += [{"role": "user", "content": before}, {"role": "assistant", "content": after}]
         messages.append({"role": "user", "content": text})
-        return self.chat(messages, max_tokens=400)
+        return self.chat(messages, max_tokens=800, whole=True)  # room for long, list-shaped dictations
 
     def summarize(self, lines: list[dict], language: str | None) -> str:
         spoken = [l for l in lines if l.get("text", "").strip()]
@@ -80,14 +90,7 @@ class Llm:
             return ""
         code = language or main_language([l["text"] for l in spoken])
         system = SUMMARY_RULES.format(language=LANGUAGE_NAMES.get(code, code))
-        parts, buf = [], ""
-        for l in spoken:
-            row = f"{'ME' if l['who'] == 'you' else (l.get('name') or 'THEM')}: {l['text']}\n"
-            if buf and len(buf) + len(row) > PART_CHARS:
-                parts.append(buf)
-                buf = ""
-            buf += row
-        parts.append(buf)
+        parts = chunks([f"{speaker(l)}: {one_line(l['text'])}\n" for l in spoken])
 
         def ask(body: str) -> str:
             # Reasoning on: a few seconds slower, but pending work stops being reported as finished.
@@ -97,7 +100,13 @@ class Llm:
         if len(parts) == 1:
             return ask(parts[0])
         partials = [ask(f"Part {i + 1} of {len(parts)} of one call:\n{p}") for i, p in enumerate(parts)]
-        return ask("Merge these summaries of consecutive parts of one call into one summary:\n\n" + "\n\n".join(partials))
+        while len(partials) > 1:  # merge in batches that fit the context, not all at once
+            groups = chunks([p + "\n\n" for p in partials])
+            if len(groups) == len(partials):  # each partial is already long: merge them in pairs
+                groups = ["\n\n".join(partials[i:i + 2]) for i in range(0, len(partials), 2)]
+            partials = [ask("Merge these summaries of consecutive parts of one call into one summary:\n\n" + g)
+                        for g in groups]
+        return partials[0]
 
     def transform(self, text: str, instruction: str) -> str:
         """Rewrite `text` as the user explicitly asked ("make it shorter", "ترجمها للإنجليزي").
@@ -111,8 +120,9 @@ class Llm:
             {"role": "user", "content": "Instruction: خلها رسمية\n\nText:\nيا شباب بكرة الاجتماع الساعة ٩ لا تتأخرون"},
             {"role": "assistant", "content": "نود تذكيركم بأن الاجتماع سيُعقد غداً في تمام الساعة ٩، ونرجو الالتزام بالموعد."},
             {"role": "user", "content": f"Instruction: {instruction}\n\nText:\n{text}"},
-        ], max_tokens=1500, timeout=120)
-        return out.strip().strip('"“”«»')
+        ], max_tokens=1500, timeout=120, whole=True)
+        quotes = '"“”«»'
+        return out.strip() if text.strip()[:1] in quotes else out.strip().strip(quotes)  # keep the user's own quotes
 
     def catch_up(self, lines: list[dict], me: str = "") -> str:
         """The last few minutes of a live call as 3 short bullets, in the call's own language."""
@@ -120,7 +130,7 @@ class Llm:
         if not spoken:
             return ""
         lang = LANGUAGE_NAMES.get(main_language([l["text"] for l in spoken]), "English")
-        rows = "\n".join(f"{'ME' if l['who'] == 'you' else (l.get('name') or 'THEM')}: {l['text']}" for l in spoken)
+        rows = "\n".join(f"{speaker(l)}: {one_line(l['text'])}" for l in spoken)
         return self.chat([
             {"role": "system", "content": f"Someone stepped away from a call for a few minutes. In {lang}, write exactly 3 "
                                           "short bullets (\"- \") with what they missed: what was said, decided or asked. "
@@ -132,14 +142,17 @@ class Llm:
 
     def ask(self, question: str, snippets: list[dict]) -> str:
         """Answer a question about past calls using only the given transcript snippets, citing them as [n]."""
-        rows = "\n".join(f"[{s['n']}] {s.get('date', '')} · {s.get('title', '')} · {s.get('who', '')}: {s['text']}" for s in snippets)
-        return self.chat([
+        rows = "\n".join(f"[{s['n']}] {one_line(s.get('date', ''))} · {one_line(s.get('title', ''))} · "
+                         f"{one_line(s.get('who', ''))}: {one_line(s['text'])}" for s in snippets)
+        cited = {str(s["n"]) for s in snippets}
+        out = self.chat([
             {"role": "system", "content": "Answer the user's question about their past calls using ONLY the numbered transcript "
                                           "lines. Answer in the language of the question, in 1–3 sentences, and cite the lines you "
                                           "used like [3]. If the lines don't contain the answer, say you couldn't find it in the "
                                           "notes. Never invent names, dates, numbers or decisions."},
             {"role": "user", "content": f"Transcript lines:\n{rows}\n\nQuestion: {question}"},
         ], max_tokens=300, timeout=90)
+        return re.sub(r"\[(\d+)\]", lambda m: m[0] if m[1] in cited else "", out)  # only citations that exist
 
     def title(self, summary: str) -> str:
         """A short title for a note, in the summary's own language."""
@@ -163,6 +176,27 @@ def main_language(lines: list[str]) -> str:
     return max(votes, key=votes.get)
 
 
+def one_line(text) -> str:
+    """Transcript text is untrusted: a newline inside it could fake a new "ME:" row in the prompt."""
+    return " ".join(str(text).split())
+
+
+def speaker(line: dict) -> str:
+    return "ME" if line.get("who") == "you" else (one_line(line.get("name") or "") or "THEM")
+
+
+def chunks(rows: list[str]) -> list[str]:
+    """Rows joined into pieces of at most PART_CHARS characters (a longer row gets a piece of its own)."""
+    parts, buf = [], ""
+    for row in rows:
+        if buf and len(buf) + len(row) > PART_CHARS:
+            parts.append(buf)
+            buf = ""
+        buf += row
+    parts.append(buf)
+    return parts
+
+
 ARTICLE_TOKENS = {"ال", "لل", "بال", "وال"}
 
 
@@ -178,11 +212,19 @@ def check_edit(before: str, after: str) -> str | None:
     invented = [t for t in a_ar if t not in b_ar and t not in ARTICLE_TOKENS]
     if len(invented) > max(1, len(b_ar) // 10):
         return f"invented Arabic words {invented}"
-    if b_ar and sum(t not in a_ar for t in b_ar) / len(b_ar) > 0.4:
+    lost_ar = sum(t not in a_ar for t in b_ar)
+    if b_ar and lost_ar / len(b_ar) > 0.4:
         return "removed most Arabic words (translation?)"
     a_lat = {t for t in a if is_latin(t)}
     if lost := [t for t in b if is_latin(t) and t not in a_lat]:
         return f"dropped English words {lost}"
+    # New English words may only replace Arabic-spelled ones (كوبرنيتيس → Kubernetes), never be added:
+    # a preamble ("Sure, here is the text") or an answer to a dictated question.
+    if len(added := {t for t in a_lat if t not in b}) > lost_ar + len(b) // 10:
+        return f"added English words {sorted(added)}"
+    n_b, n_a = (sum(t not in ARTICLE_TOKENS for t in words) for words in (b, a))
+    if n_a > n_b * 1.25 + 3 or n_a < n_b * 0.8:  # e.g. a chatty addition, or a reply cut off early
+        return "added or removed words"
     if re.findall(r"\d+", before) != re.findall(r"\d+", after):
         return "changed numbers"
     return None

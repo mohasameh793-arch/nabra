@@ -5,8 +5,10 @@
 //!   notes/<id>.json  one file per call
 
 use std::fs;
-use std::io::Write;
+use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -15,17 +17,69 @@ pub fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
+/// A time-based id that never repeats, even for two items made in the same millisecond.
+pub fn new_id() -> u64 {
+    static LAST: AtomicU64 = AtomicU64::new(0);
+    let now = now_ms();
+    LAST.fetch_max(now, Ordering::SeqCst); // jump to the clock, then take the next free value
+    LAST.fetch_add(1, Ordering::SeqCst)
+}
+
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    static SEQ: AtomicU64 = AtomicU64::new(0);
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
-    let tmp = path.with_extension("tmp");
-    fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
-    fs::rename(&tmp, path).map_err(|e| e.to_string()) // never leaves a half-written file behind
+    // Own tmp name per write, so two overlapping saves never share (or steal) one file.
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
+    let tmp = path.with_file_name(format!("{name}.{}.{}.tmp", std::process::id(), SEQ.fetch_add(1, Ordering::SeqCst)));
+    let write = || -> std::io::Result<()> {
+        let mut f = fs::File::create(&tmp)?;
+        f.write_all(bytes)?;
+        f.sync_all() // on disk before the rename, so a power cut can't leave an empty file
+    };
+    if let Err(e) = write() {
+        let _ = fs::remove_file(&tmp);
+        return Err(e.to_string());
+    }
+    // Windows refuses to replace a file someone (the engine, an antivirus) has open for a moment: retry briefly.
+    let mut tries = 0;
+    loop {
+        match fs::rename(&tmp, path) {
+            Ok(()) => return Ok(()), // never leaves a half-written file behind
+            Err(_) if tries < 10 => {
+                tries += 1;
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(e) => {
+                let _ = fs::remove_file(&tmp);
+                return Err(e.to_string());
+            }
+        }
+    }
 }
 
+/// Missing file = empty/default. A file that can't be read or parsed is an error (and a corrupt one is copied
+/// to `<name>.corrupt`), so callers never save over data they couldn't load.
+fn load_json<T: for<'de> Deserialize<'de> + Default>(path: &Path) -> Result<T, String> {
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
+    let raw = match fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(T::default()),
+        Err(e) => return Err(format!("Couldn't read {name}: {e}")),
+    };
+    serde_json::from_str(&raw).map_err(|e| {
+        let _ = fs::copy(path, path.with_file_name(format!("{name}.corrupt")));
+        format!("{name} is damaged ({e}); a copy was kept as {name}.corrupt")
+    })
+}
+
+/// For display only: whatever could be loaded, else empty. Never use this before a write.
 fn read_json<T: for<'de> Deserialize<'de> + Default>(path: &Path) -> T {
-    fs::read_to_string(path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+    load_json(path).unwrap_or_else(|e| {
+        eprintln!("store: {e}");
+        T::default()
+    })
 }
 
 // --- settings -------------------------------------------------------------------------------
@@ -126,7 +180,32 @@ impl Settings {
         if ![&s.personal, &s.work, &s.email, &s.other].iter().all(|v| ["formal", "casual", "very_casual"].contains(&v.as_str())) {
             return Err("Unknown style".into());
         }
+        if !keep_ok(&self.history_keep) {
+            return Err("Unknown history setting".into());
+        }
+        if !crate::keyboard::TALK_KEYS.iter().any(|k| k.0 == self.talk_key) {
+            return Err("Unknown talk key".into());
+        }
+        if !["right", "left", "bottom"].contains(&self.pill_dock.as_str()) {
+            return Err("Unknown pill position".into());
+        }
         Ok(())
+    }
+
+    /// Values an older/newer build may have stored that this one can't use go back to safe defaults
+    /// (so every later save doesn't fail validation).
+    fn repair(mut self) -> Self {
+        let d = Settings::default();
+        if !keep_ok(&self.history_keep) {
+            self.history_keep = d.history_keep; // "forever": never delete because of a value we don't understand
+        }
+        if !crate::keyboard::TALK_KEYS.iter().any(|k| k.0 == self.talk_key) {
+            self.talk_key = d.talk_key;
+        }
+        if !["right", "left", "bottom"].contains(&self.pill_dock.as_str()) {
+            self.pill_dock = d.pill_dock;
+        }
+        self
     }
 
     pub fn langs(&self) -> String {
@@ -134,11 +213,17 @@ impl Settings {
     }
 }
 
+/// "forever", "off", or a number of days 1..=3650.
+fn keep_ok(keep: &str) -> bool {
+    keep == "forever" || keep == "off" || keep.parse::<u64>().is_ok_and(|d| (1..=3650).contains(&d))
+}
+
 // --- dictionary -----------------------------------------------------------------------------
 
 /// A personal word (`term` + optional `sounds_like`) or a replacement (`from` → `to`).
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Word {
+    #[serde(default)] // a hand-written entry without an id must not make the whole file unreadable
     pub id: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub term: Option<String>,
@@ -164,6 +249,7 @@ impl Word {
 
 /// Say `trigger`, get `text` (the engine reads snippets.json directly).
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Snippet {
     pub id: u64,
     pub trigger: String,
@@ -171,6 +257,7 @@ pub struct Snippet {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Pad {
     pub id: u64,
     pub body: String,
@@ -184,9 +271,9 @@ fn upsert<T: Clone + Serialize + for<'de> Deserialize<'de>>(
     id_of: impl Fn(&T) -> u64,
     set_id: impl Fn(&mut T, u64),
 ) -> Result<Vec<T>, String> {
-    let mut items: Vec<T> = read_json(path);
+    let mut items: Vec<T> = load_json(path)?;
     if id_of(&item) == 0 {
-        set_id(&mut item, now_ms());
+        set_id(&mut item, new_id());
         items.insert(0, item);
     } else if let Some(slot) = items.iter_mut().find(|x| id_of(x) == id_of(&item)) {
         *slot = item;
@@ -198,7 +285,7 @@ fn upsert<T: Clone + Serialize + for<'de> Deserialize<'de>>(
 }
 
 fn remove<T: Serialize + for<'de> Deserialize<'de>>(path: &Path, id: u64, id_of: impl Fn(&T) -> u64) -> Result<Vec<T>, String> {
-    let items: Vec<T> = read_json::<Vec<T>>(path).into_iter().filter(|x| id_of(x) != id).collect();
+    let items: Vec<T> = load_json::<Vec<T>>(path)?.into_iter().filter(|x| id_of(x) != id).collect();
     write_atomic(path, &serde_json::to_vec_pretty(&items).unwrap())?;
     Ok(items)
 }
@@ -206,6 +293,7 @@ fn remove<T: Serialize + for<'de> Deserialize<'de>>(path: &Path, id: u64, id_of:
 // --- history --------------------------------------------------------------------------------
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Fixes {
     pub terms: u32,
     pub dictionary: u32,
@@ -227,7 +315,8 @@ pub struct Dictation {
 
 // --- notes ----------------------------------------------------------------------------------
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Line {
     pub id: u64,
     pub who: String, // "them" | "you"
@@ -286,11 +375,18 @@ pub struct NoteCard {
 
 pub struct Store {
     pub dir: PathBuf,
+    /// Held across every read-modify-write (and the history append), so two saves never lose each other's change.
+    /// ponytail: one lock for all files; per-file locks if saves ever queue up noticeably.
+    lock: Mutex<()>,
 }
 
 impl Store {
     pub fn new(dir: PathBuf) -> Self {
-        Self { dir }
+        Self { dir, lock: Mutex::new(()) }
+    }
+
+    fn guard(&self) -> MutexGuard<'_, ()> {
+        self.lock.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     pub fn dictionary_path(&self) -> PathBuf {
@@ -298,12 +394,19 @@ impl Store {
     }
 
     pub fn settings(&self) -> Settings {
-        read_json(&self.dir.join("settings.json"))
+        read_json::<Settings>(&self.dir.join("settings.json")).repair() // a damaged file is kept as settings.json.corrupt
     }
 
     pub fn save_settings(&self, s: &Settings) -> Result<(), String> {
         s.validate()?;
-        write_atomic(&self.dir.join("settings.json"), &serde_json::to_vec_pretty(s).unwrap())
+        let _g = self.guard();
+        let path = self.dir.join("settings.json");
+        // Only replace a file we could read (a locked one would have loaded as defaults).
+        match fs::read(&path) {
+            Err(e) if e.kind() != ErrorKind::NotFound => return Err(format!("Couldn't read settings.json: {e}")),
+            _ => {}
+        }
+        write_atomic(&path, &serde_json::to_vec_pretty(s).unwrap())
     }
 
     pub fn words(&self) -> Vec<Word> {
@@ -312,9 +415,10 @@ impl Store {
 
     pub fn save_word(&self, mut word: Word) -> Result<Vec<Word>, String> {
         word.validate()?;
-        let mut words = self.words();
+        let _g = self.guard();
+        let mut words: Vec<Word> = load_json(&self.dictionary_path())?;
         if word.id == 0 {
-            word.id = now_ms();
+            word.id = new_id();
             words.insert(0, word);
         } else if let Some(slot) = words.iter_mut().find(|w| w.id == word.id) {
             *slot = word;
@@ -326,7 +430,8 @@ impl Store {
     }
 
     pub fn delete_word(&self, id: u64) -> Result<Vec<Word>, String> {
-        let words: Vec<Word> = self.words().into_iter().filter(|w| w.id != id).collect();
+        let _g = self.guard();
+        let words: Vec<Word> = load_json::<Vec<Word>>(&self.dictionary_path())?.into_iter().filter(|w| w.id != id).collect();
         write_atomic(&self.dictionary_path(), &serde_json::to_vec_pretty(&words).unwrap())?;
         Ok(words)
     }
@@ -342,7 +447,8 @@ impl Store {
 
     /// Remember (or refine) `name`'s voice. Averaging over calls makes recognition steadier.
     pub fn remember_voice(&self, name: &str, voice: &[f32], phrases: u32) -> Result<(), String> {
-        let mut all = self.known_voices();
+        let _g = self.guard();
+        let mut all: Vec<KnownVoice> = load_json(&self.voices_path())?;
         match all.iter_mut().find(|k| k.name.eq_ignore_ascii_case(name)) {
             Some(k) if k.voice.len() == voice.len() => {
                 let (a, b) = (k.phrases.max(1) as f32, phrases.max(1) as f32);
@@ -358,6 +464,7 @@ impl Store {
     /// Forget every voiceprint (Settings → Privacy): the named voices, and the voices kept in each saved note
     /// for naming later. Names and transcripts stay.
     pub fn forget_voices(&self) -> Result<(), String> {
+        let _g = self.guard();
         match fs::remove_file(self.voices_path()) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.to_string()),
             _ => {}
@@ -365,7 +472,7 @@ impl Store {
         for mut note in self.notes() {
             if note.speakers.iter().any(|s| !s.voice.is_empty()) {
                 note.speakers.iter_mut().for_each(|s| s.voice.clear());
-                self.save_note(&note)?;
+                write_atomic(&self.note_path(&note.id)?, &serde_json::to_vec_pretty(&note).unwrap())?;
             }
         }
         Ok(())
@@ -384,13 +491,15 @@ impl Store {
         if t.is_empty() || x.is_empty() || t.len() > 100 || x.len() > 20_000 {
             return Err("A snippet needs a short trigger phrase and some text".into());
         }
-        if self.snippets().iter().any(|o| o.id != s.id && o.trigger.trim().eq_ignore_ascii_case(t)) {
+        let _g = self.guard();
+        if load_json::<Vec<Snippet>>(&self.snippets_path())?.iter().any(|o| o.id != s.id && o.trigger.trim().eq_ignore_ascii_case(t)) {
             return Err("Another snippet already uses that trigger".into());
         }
         upsert(&self.snippets_path(), s, |s| s.id, |s, id| s.id = id)
     }
 
     pub fn delete_snippet(&self, id: u64) -> Result<Vec<Snippet>, String> {
+        let _g = self.guard();
         remove(&self.snippets_path(), id, |s: &Snippet| s.id)
     }
 
@@ -404,10 +513,12 @@ impl Store {
 
     pub fn save_pad(&self, mut p: Pad) -> Result<Vec<Pad>, String> {
         p.updated = now_ms();
+        let _g = self.guard();
         upsert(&self.pads_path(), p, |p| p.id, |p, id| p.id = id)
     }
 
     pub fn delete_pad(&self, id: u64) -> Result<Vec<Pad>, String> {
+        let _g = self.guard();
         remove(&self.pads_path(), id, |p: &Pad| p.id)
     }
 
@@ -416,17 +527,40 @@ impl Store {
     }
 
     pub fn add_dictation(&self, d: &Dictation) -> Result<(), String> {
+        let _g = self.guard();
         fs::create_dir_all(&self.dir).map_err(|e| e.to_string())?;
-        let mut f = fs::OpenOptions::new().create(true).append(true).open(self.history_path()).map_err(|e| e.to_string())?;
-        writeln!(f, "{}", serde_json::to_string(d).unwrap()).map_err(|e| e.to_string())
+        let append = || -> std::io::Result<()> {
+            let mut f = fs::OpenOptions::new().create(true).read(true).append(true).open(self.history_path())?;
+            // A crash mid-append leaves a line without its newline: end it, so this entry isn't glued onto it.
+            let mut last = [b'\n'];
+            if f.metadata()?.len() > 0 {
+                f.seek(SeekFrom::End(-1))?;
+                f.read_exact(&mut last)?;
+            }
+            let sep = if last[0] == b'\n' { "" } else { "\n" };
+            writeln!(f, "{sep}{}", serde_json::to_string(d).unwrap())
+        };
+        append().map_err(|e| e.to_string())
     }
 
     /// Newest first. ponytail: whole-file read; switch to SQLite if histories reach ~100k rows.
     pub fn history(&self) -> Vec<Dictation> {
-        let raw = fs::read_to_string(self.history_path()).unwrap_or_default();
+        self.load_history().unwrap_or_else(|e| {
+            eprintln!("store: {e}");
+            Vec::new()
+        })
+    }
+
+    /// Like `history`, but an unreadable file is an error, so it's never rewritten from nothing.
+    fn load_history(&self) -> Result<Vec<Dictation>, String> {
+        let raw = match fs::read_to_string(self.history_path()) {
+            Ok(raw) => raw,
+            Err(e) if e.kind() == ErrorKind::NotFound => String::new(),
+            Err(e) => return Err(format!("Couldn't read history.jsonl: {e}")),
+        };
         let mut all: Vec<Dictation> = raw.lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
         all.reverse();
-        all
+        Ok(all)
     }
 
     fn rewrite_history(&self, items: &[Dictation]) -> Result<(), String> {
@@ -435,7 +569,8 @@ impl Store {
     }
 
     pub fn edit_dictation(&self, id: u64, flagged: Option<bool>, delete: bool) -> Result<(), String> {
-        let mut items = self.history();
+        let _g = self.guard();
+        let mut items = self.load_history()?;
         if delete {
             items.retain(|d| d.id != id);
         } else if let Some(d) = items.iter_mut().find(|d| d.id == id) {
@@ -451,12 +586,13 @@ impl Store {
         let days: u64 = match keep {
             "off" => 0,
             d => match d.parse() {
-                Ok(n) => n,
-                Err(_) => return Ok(()), // "forever"
+                Ok(n @ 1..=3650) => n,
+                _ => return Ok(()), // "forever", or a value we don't understand: never delete on a guess
             },
         };
         let cutoff = now_ms().saturating_sub(days * 86_400_000);
-        let all = self.history();
+        let _g = self.guard();
+        let all = self.load_history()?;
         let kept: Vec<Dictation> = all.iter().filter(|d| days > 0 && d.id >= cutoff).cloned().collect();
         if kept.len() != all.len() {
             self.rewrite_history(&kept)?;
@@ -465,6 +601,7 @@ impl Store {
     }
 
     pub fn clear_history(&self) -> Result<(), String> {
+        let _g = self.guard();
         let _ = fs::remove_file(self.history_path());
         Ok(())
     }
@@ -476,6 +613,7 @@ impl Store {
     }
 
     pub fn save_note(&self, n: &Note) -> Result<(), String> {
+        let _g = self.guard();
         write_atomic(&self.note_path(&n.id)?, &serde_json::to_vec_pretty(n).unwrap())
     }
 
@@ -484,7 +622,18 @@ impl Store {
         serde_json::from_str(&raw).map_err(|e| e.to_string())
     }
 
+    /// Change a saved note in place: re-read under the lock, so edits made meanwhile (thoughts, speaker names,
+    /// a summary) aren't overwritten by an older copy, and a deleted note isn't brought back.
+    pub fn update_note(&self, id: &str, change: impl FnOnce(&mut Note)) -> Result<Note, String> {
+        let _g = self.guard();
+        let mut note = self.note(id)?;
+        change(&mut note);
+        write_atomic(&self.note_path(id)?, &serde_json::to_vec_pretty(&note).unwrap())?;
+        Ok(note)
+    }
+
     pub fn delete_note(&self, id: &str) -> Result<(), String> {
+        let _g = self.guard();
         fs::remove_file(self.note_path(id)?).map_err(|e| e.to_string())
     }
 
@@ -493,6 +642,7 @@ impl Store {
             .into_iter()
             .flatten()
             .flatten()
+            .filter(|e| e.path().extension().is_some_and(|x| x == "json")) // not .tmp / .corrupt leftovers
             .filter_map(|e| serde_json::from_str(&fs::read_to_string(e.path()).ok()?).ok())
             .collect();
         all.sort_by(|a, b| b.started_at.cmp(&a.started_at));
@@ -582,6 +732,39 @@ mod tests {
         assert_eq!(s.styles.for_kind("email"), "formal");
         s.styles.personal = "shouty".into();
         assert!(s.validate().is_err());
+    }
+
+    #[test]
+    fn corrupt_file_is_never_overwritten() {
+        let store = temp_store("corrupt");
+        fs::create_dir_all(&store.dir).unwrap();
+        let bad = r#"[{"id": 1, "term": "Layla"}, {"id": "#; // half-written
+        fs::write(store.dictionary_path(), bad).unwrap();
+        assert!(store.words().is_empty()); // display: nothing
+        assert!(store.save_word(Word { term: Some("x".into()), ..Default::default() }).is_err());
+        assert!(store.delete_word(1).is_err());
+        assert_eq!(fs::read_to_string(store.dictionary_path()).unwrap(), bad); // untouched
+        assert!(store.dir.join("dictionary.json.corrupt").exists());
+        // An entry without an id no longer makes the whole file unreadable.
+        fs::write(store.dictionary_path(), r#"[{"term": "Layla"}]"#).unwrap();
+        assert_eq!(store.save_word(Word { term: Some("x".into()), ..Default::default() }).unwrap().len(), 2);
+        let _ = fs::remove_dir_all(&store.dir);
+    }
+
+    #[test]
+    fn torn_history_line_and_bad_keep_values() {
+        let store = temp_store("torn");
+        fs::create_dir_all(&store.dir).unwrap();
+        fs::write(store.dir.join("history.jsonl"), "{\"id\":1,\"text\":\"a\"}\n{\"id\":2,\"te").unwrap();
+        store.add_dictation(&Dictation { id: 3, text: "b".into(), ..Default::default() }).unwrap();
+        assert_eq!(store.history().iter().map(|d| d.id).collect::<Vec<_>>(), [3, 1]);
+        for keep in ["0", "-1", "7d", "99999999999999"] {
+            store.prune_history(keep).unwrap();
+            assert!(Settings { history_keep: keep.into(), ..Settings::default() }.validate().is_err(), "{keep}");
+        }
+        assert_eq!(store.history().len(), 2);
+        assert!(new_id() != new_id());
+        let _ = fs::remove_dir_all(&store.dir);
     }
 
     #[test]
