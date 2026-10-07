@@ -89,10 +89,12 @@ class Engine:
             self._keep(wav, result)
         return result
 
-    def note(self, wav: bytes, langs: list[str], partial: bool = False) -> dict:
-        """partial: live text while someone is still speaking (fast pass; the finished phrase is redone in full)."""
+    def note(self, wav: bytes, langs: list[str], partial: bool = False, context: str = "") -> dict:
+        """partial: live text while someone is still speaking (fast pass; the finished phrase is redone in full).
+        context: the previous line of the call, so names and topics carry over between phrases."""
         with self.gpu:
-            raw, language = self.speech.transcribe(wav, langs, self.lexicon.prompt_terms(), beam_size=1 if partial else 5)
+            raw, language = self.speech.transcribe(wav, langs, self.lexicon.prompt_terms(), beam_size=1 if partial else 5,
+                                                   strict=True, detect=not partial, context=context)
         return {"text": self.lexicon.restore(raw) if raw else "", "language": language}
 
     def instruction(self, wav: bytes, langs: list[str]) -> dict:
@@ -207,7 +209,8 @@ def handler_for(engine: Engine):
                     req = json.loads(body)
                     self.reply(200, {"text": engine.transform(req["text"], req["instruction"])})
                 elif url.path == "/note":
-                    self.reply(200, engine.note(body, langs, q.get("partial", ["0"])[0] == "1"))
+                    self.reply(200, engine.note(body, langs, q.get("partial", ["0"])[0] == "1",
+                                                q.get("context", [""])[0][:400]))
                 elif url.path == "/voice":
                     self.reply(200, {"voice": engine.voices.embed(body)})
                 elif url.path == "/catchup":

@@ -305,7 +305,7 @@ impl Controller {
     fn heard(&mut self, audio: &[u8]) {
         self.render(View::Busy);
         let langs = self.state().settings.lock().unwrap().langs();
-        match self.call_engine(|| sidecar::note_chunk(audio, &langs, false)) {
+        match self.call_engine(|| sidecar::note_chunk(audio, &langs, false, "")) {
             Some(text) if text.trim().is_empty() => self.problem("Didn't hear any speech playing."),
             Some(text) => self.flash(View::Reveal { title: "What was playing".into(), text, note: None, t: 0.0 }, REVEAL_FOR),
             None => {}

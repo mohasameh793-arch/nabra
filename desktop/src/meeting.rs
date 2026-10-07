@@ -20,10 +20,12 @@ use crate::App;
 // ponytail: fixed energy gate (~-40 dBFS); switch to an adaptive noise floor if noisy rooms need it.
 const SPEECH_RMS: f32 = 0.01;
 const MIN_PHRASE_S: f32 = 1.5;
-const PAUSE_S: f32 = 0.6;
+// A slightly longer pause gives Whisper whole thoughts (more context, fewer cut words) instead of fragments.
+const PAUSE_S: f32 = 0.8;
 const MAX_PHRASE_S: f32 = 12.0; // long monologues still finalize regularly (and partials stay short)
-/// Live text: re-transcribe the phrase in progress this often.
-const PARTIAL_EVERY: Duration = Duration::from_millis(700);
+/// Live text: re-transcribe the phrase in progress this often. Each pass redoes the whole phrase and both sides
+/// can talk, so faster than this queued finished lines behind live ones (the call notes lagged).
+const PARTIAL_EVERY: Duration = Duration::from_millis(1200);
 const MIN_PARTIAL_S: f32 = 0.8;
 // ponytail: an echo starts within a phrase cut (~2 s) of the line it echoes; a wider window deleted the user
 // repeating something back. Compare phrase spans if real echoes still slip through.
@@ -480,14 +482,16 @@ pub struct Job {
 fn handle(app: &AppHandle, note: &Mutex<Note>, langs: &str, job: &Job, next_id: &mut u64, voices: &mut Voices) {
     let who = if job.source == Source::System { "them" } else { "you" };
     let audio = wav(&job.samples, job.rate);
-    let mut text = sidecar::note_chunk(&audio, langs, job.partial);
+    // The last finished line before this phrase (either side): names and the topic carry over to it.
+    let context = note.lock().unwrap().lines.iter().rev().find(|l| l.t <= job.t).map(|l| l.text.clone()).unwrap_or_default();
+    let mut text = sidecar::note_chunk(&audio, langs, job.partial, &context);
     // A finished phrase is never thrown away over a hiccup (engine restarting or busy): try again twice.
     for _ in 0..if job.partial { 0 } else { 2 } {
         if text.is_ok() {
             break;
         }
         std::thread::sleep(Duration::from_secs(2));
-        text = sidecar::note_chunk(&audio, langs, false);
+        text = sidecar::note_chunk(&audio, langs, false, &context);
     }
     let text = match text {
         Ok(text) => text,
@@ -638,12 +642,12 @@ mod tests {
         let mut p = Phrases::new(Source::Mic, 1000);
         p.feed(&[0.3; 2000]);
         assert!(p.next(false).is_none(), "still talking");
-        p.feed(&[0.0; 700]);
+        p.feed(&[0.0; 900]);
         let (phrase, at) = p.next(false).expect("pause ends the phrase");
-        assert_eq!((phrase.len(), at), (2700, 0.0));
+        assert_eq!((phrase.len(), at), (2900, 0.0));
         p.feed(&[0.0; 2000]);
         assert!(p.next(false).is_none(), "silence is never sent");
-        assert!((p.start - 4.7).abs() < 1e-3);
+        assert!((p.start - 4.9).abs() < 1e-3);
         p.feed(&[0.3; 500]);
         assert!(p.next(true).is_some(), "flush sends the tail");
     }
@@ -653,7 +657,7 @@ mod tests {
         let mut p = Phrases::new(Source::System, 1000);
         p.feed(&[0.3; 2000]);
         p.pad_to(60.0); // loopback went quiet mid-phrase: the phrase still ends
-        assert_eq!(p.next(false).map(|(s, at)| (s.len(), at)), Some((2700, 0.0)));
+        assert_eq!(p.next(false).map(|(s, at)| (s.len(), at)), Some((2900, 0.0)));
         p.pad_to(60.0); // a long silence is skipped, not buffered
         assert!(p.buf.is_empty() && (p.start - 60.0).abs() < 1e-3);
         p.feed(&[0.3; 500]);

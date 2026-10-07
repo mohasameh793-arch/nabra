@@ -336,9 +336,11 @@ pub fn transform(text: &str, instruction: &str) -> Result<String, String> {
     Ok(v["text"].as_str().unwrap_or_default().into())
 }
 
-/// `partial`: live text for a phrase that's still being spoken (fast pass).
-pub fn note_chunk(wav: &[u8], langs: &str, partial: bool) -> Result<String, String> {
+/// `partial`: live text for a phrase that's still being spoken (fast pass). `context`: the line said just before,
+/// so names and topics carry over between phrases.
+pub fn note_chunk(wav: &[u8], langs: &str, partial: bool, context: &str) -> Result<String, String> {
     let v: Value = post(&format!("/note?langs={langs}&partial={}", partial as u8))
+        .query("context", context)
         .timeout(Duration::from_secs(120))
         .send_bytes(wav)
         .map_err(explain)?

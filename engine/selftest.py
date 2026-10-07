@@ -77,11 +77,14 @@ with tempfile.TemporaryDirectory() as d:
     assert lex_user.restore('قال "دوكر" و') == 'قال "Docker" و'  # bad entries skipped, no crash
 
 # silence hallucinations and prompt echo are dropped; a lone vocabulary word is not
-from speech import MIXED_EXAMPLE, is_hallucination  # noqa: E402
+from speech import MIXED_EXAMPLE, foreign_script, is_hallucination  # noqa: E402
 
 prompt = MIXED_EXAMPLE + " Docker, GitHub, React."
 assert is_hallucination("شكراً للمشاهدة", prompt) and is_hallucination(" Thanks for watching!", prompt)
 assert is_hallucination(MIXED_EXAMPLE, prompt) and is_hallucination("Docker, GitHub, React.", prompt)
+# A script none of the chosen languages uses is a misdetection (Japanese out of a noisy Arabic/English call).
+assert foreign_script("きょうの会議", ["ar", "en"]) and foreign_script("Привет", ["ar", "en"])
+assert not foreign_script("きょうの会議", ["ja"]) and not foreign_script("hello مرحبا", ["ar", "en"]) and not foreign_script("x", [])
 assert not is_hallucination("GitHub", prompt) and not is_hallucination("Thank you for the update", prompt)
 
 # the guard

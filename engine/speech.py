@@ -2,6 +2,7 @@
 import io
 import logging
 import os
+import re
 import site
 from pathlib import Path
 
@@ -31,6 +32,23 @@ _HALLUCINATIONS = {fold(s) for s in [
     "Thank you for watching", "Thanks for watching", "Please subscribe", "Subtitles by the Amara.org community",
     "شكرا للمشاهدة", "شكرا لكم على المشاهدة", "اشتركوا في القناة", "ترجمة نانسي قنقر",
 ]}
+
+
+# Scripts that only some languages use. Text in one of these when none of its languages is allowed is a
+# misdetection (e.g. Japanese out of noisy call audio), never what the user said.
+_SCRIPTS = [
+    (re.compile(r"[぀-ヿ㐀-鿿가-힯]"), {"ja", "zh", "ko", "yue"}),
+    (re.compile(r"[Ѐ-ӿ]"), {"ru", "uk", "bg", "sr", "mk", "be", "kk", "mn", "tg", "ba", "tt"}),
+    (re.compile(r"[֐-׿]"), {"he", "yi"}),
+    (re.compile(r"[Ͱ-Ͽ]"), {"el"}),
+    (re.compile(r"[ऀ-ॿ]"), {"hi", "mr", "ne", "sa"}),
+    (re.compile(r"[฀-๿]"), {"th"}),
+]
+
+
+def foreign_script(text: str, allowed: list[str]) -> bool:
+    """True if `text` contains a script that none of the allowed languages is written in."""
+    return bool(allowed) and any(rx.search(text) and not langs & set(allowed) for rx, langs in _SCRIPTS)
 
 
 def is_hallucination(segment: str, prompt: str) -> bool:
@@ -74,32 +92,54 @@ class Transcriber:
         # The first decode initializes CUDA kernels and the VAD model (~2–3 s). Pay that now.
         list(self.model.transcribe(np.zeros(SAMPLE_RATE, np.float32), language="en", vad_filter=True)[0])
 
-    def choose_language(self, audio: np.ndarray, allowed: list[str]) -> str | None:
-        """None = let Whisper detect per segment (keeps Arabic/English mixing). A code = force it."""
+    def choose_language(self, audio: np.ndarray, allowed: list[str], strict: bool = False) -> tuple[str | None, str | None]:
+        """(forced, best allowed). forced None = let Whisper detect per segment (keeps Arabic/English mixing).
+        strict (call notes): another language is never kept, however sure Whisper is: short, noisy call audio is
+        where it is confidently wrong (Japanese, Welsh…), and the user picked the languages they speak."""
         if not allowed:
-            return None
+            return None, None
         _, _, ranked = self.model.detect_language(audio, vad_filter=True)
-        top, top_p = ranked[0] if ranked else (None, 0.0)
-        if top in allowed or top_p >= CONFIDENT_DETECTION:
-            return None
         in_list = [(code, p) for code, p in ranked if code in allowed]
-        return max(in_list, key=lambda x: x[1])[0] if in_list else allowed[0]
+        best = max(in_list, key=lambda x: x[1])[0] if in_list else allowed[0]
+        top, top_p = ranked[0] if ranked else (None, 0.0)
+        if top in allowed or (top_p >= CONFIDENT_DETECTION and not strict):
+            return None, best
+        return best, best
 
     def transcribe(self, wav: bytes, allowed: list[str], vocabulary: list[str], beam_size: int = 5,
-                   dialect: str = "auto") -> tuple[str, str | None]:
-        """Returns (text, language). beam_size=1 is the fast pass for live (still-speaking) call text."""
+                   dialect: str = "auto", strict: bool = False, detect: bool = True,
+                   context: str = "") -> tuple[str, str | None]:
+        """Returns (text, language). beam_size=1 is the fast pass for live (still-speaking) call text.
+        detect=False skips the separate language check (live call text: speed over certainty; the finished
+        phrase is redone with it). context: what was said just before, so names and topics carry over."""
         from faster_whisper import decode_audio
 
         audio = decode_audio(io.BytesIO(wav), sampling_rate=SAMPLE_RATE)
         if len(audio) < SAMPLE_RATE * 0.3 or np.sqrt(np.mean(audio ** 2)) < SILENCE_RMS:
             return "", None
-        forced = self.choose_language(audio, allowed)
+        forced, best = self.choose_language(audio, allowed, strict) if detect else (None, None)
         arabic_in_play = not allowed or "ar" in allowed
         prompt = (MIXED_EXAMPLES.get(dialect, MIXED_EXAMPLE) + " " if arabic_in_play else "") + ", ".join(vocabulary) + "."
+        context = context.strip()[-200:]
         if self.device == "cpu":
             beam_size = 1  # several times faster on a processor, for a small accuracy cost
-        segments, info = self.model.transcribe(
-            audio, language=forced, multilingual=forced is None, vad_filter=True, beam_size=beam_size,
-            initial_prompt=prompt, condition_on_previous_text=False)  # no repetition loops on long dictations
-        text = " ".join(s.text.strip() for s in segments if not is_hallucination(s.text, prompt)).strip()
-        return text, (forced or info.language) if text else None
+
+        def run(language: str | None) -> tuple[str, str | None]:
+            segments, info = self.model.transcribe(
+                audio, language=language, multilingual=language is None, vad_filter=True, beam_size=beam_size,
+                initial_prompt=prompt + (" " + context if context else ""),
+                condition_on_previous_text=False)  # no repetition loops on long dictations
+            text = " ".join(s.text.strip() for s in segments
+                            if not is_hallucination(s.text, prompt) and fold(s.text) != fold(context)).strip()
+            return text, language or info.language
+
+        text, language = run(forced)
+        if text and foreign_script(text, allowed):
+            # A language the user doesn't speak came out (per-segment detection can still drift): redo it in the
+            # most likely allowed one.
+            text, language = run(best or allowed[0])
+            if foreign_script(text, allowed):
+                # Whisper keeps writing e.g. Japanese even when told "English": it's not speech in a language the
+                # user speaks (or noise it misheard). Nothing is better than text nobody in the call said.
+                text = ""
+        return text, language if text else None
