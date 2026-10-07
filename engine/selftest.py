@@ -77,6 +77,8 @@ assert not is_hallucination("GitHub", prompt) and not is_hallucination("Thank yo
 # the guard
 assert check_edit("وبعدها أضيف انستول", "وبعدها أضيف install") is None
 assert check_edit("نستخدم Docker بدل", "نستخدم Docker بدل.") is None
+assert check_edit("attack everything how did I build it how to make it stronger how to make it organized",
+                  "Attack everything:\n- How did I build it?\n- How to make it stronger?\n- How to make it organized?") is None
 assert check_edit("أنا أبغى أسوي موقع", "I want to build a website")              # translation
 assert check_edit("نستخدم Postgres", "نستخدم PostgreSQL")                          # changed user's word
 assert check_edit("عندي 16 جيجا", "عندي 32 جيجا")                                 # number
