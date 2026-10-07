@@ -13,8 +13,8 @@ use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::Accessibility::{
-    CUIAutomation, IUIAutomation, IUIAutomationElement, TreeScope_Descendants, UIA_ControlTypePropertyId,
-    UIA_ListControlTypeId, UIA_ListItemControlTypeId,
+    CUIAutomation, IUIAutomation, IUIAutomationElement, TreeScope_Descendants, UIA_ButtonControlTypeId,
+    UIA_ControlTypePropertyId, UIA_ListControlTypeId, UIA_ListItemControlTypeId,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
@@ -48,6 +48,74 @@ pub fn scan() -> Vec<String> {
         }
     }
     clean(names)
+}
+
+/// The other people the meeting app shows as able to talk right now: unmuted, or marked as speaking. Polled about
+/// once a second during call notes; a "They" phrase said while exactly one of them was unmuted is theirs.
+/// Google Meet: a "Mute <name>'s microphone" button exists only for others, only while they're unmuted (seen in
+/// a real call). Zoom/Teams: participant-list items that say "unmuted" or "speaking".
+pub fn talking() -> Vec<String> {
+    let mut names = Vec::new();
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let Ok(uia) = CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER) else {
+            return names;
+        };
+        for hwnd in meeting_windows() {
+            names.extend(talking_in(&uia, hwnd));
+        }
+    }
+    let mut seen = HashSet::new();
+    names.retain(|n: &String| !n.is_empty() && seen.insert(n.to_lowercase()));
+    names
+}
+
+unsafe fn talking_in(uia: &IUIAutomation, hwnd: HWND) -> Vec<String> {
+    let mut out = Vec::new();
+    let Ok(root) = uia.ElementFromHandle(hwnd) else { return out };
+    let (Ok(is_button), Ok(is_item)) = (
+        uia.CreatePropertyCondition(UIA_ControlTypePropertyId, &VARIANT::from(UIA_ButtonControlTypeId.0)),
+        uia.CreatePropertyCondition(UIA_ControlTypePropertyId, &VARIANT::from(UIA_ListItemControlTypeId.0)),
+    ) else {
+        return out;
+    };
+    let Ok(either) = uia.CreateOrCondition(&is_button, &is_item) else { return out };
+    let Ok(all) = root.FindAll(TreeScope_Descendants, &either) else { return out };
+    for i in 0..all.Length().unwrap_or(0).min(600) {
+        let Ok(name) = all.GetElement(i).and_then(|e| e.CurrentName()) else { continue };
+        if let Some(n) = talking_name(&name.to_string()) {
+            out.push(n);
+        }
+    }
+    out
+}
+
+/// "Mute Ahmed's microphone" / "كتم صوت ميكروفون Ahmed" → Ahmed; "Zaid, Computer audio unmuted" → Zaid.
+fn talking_name(label: &str) -> Option<String> {
+    let label = strip_bidi(label);
+    let lower = label.to_lowercase();
+    let meet_en = label.get(..5).filter(|p| p.eq_ignore_ascii_case("mute ")).map(|_| &label[5..]).and_then(|rest| {
+        rest.strip_suffix("'s microphone").or_else(|| rest.strip_suffix("’s microphone"))
+    });
+    let name = if let Some(rest) = label.strip_prefix("كتم صوت ميكروفون ") {
+        rest.to_string()
+    } else if let Some(rest) = meet_en {
+        rest.to_string()
+    } else if ["unmuted", "speaking", "is talking", "يتحدث", "غير مكتوم"].iter().any(|k| lower.contains(k))
+        && !lower.contains("(me)") && !lower.contains("(you)") && !label.contains("(أنا)") && !label.contains("(أنت)")
+    {
+        label.split([',', '\n', '|', '(']).next().unwrap_or_default().to_string()
+    } else {
+        return None;
+    };
+    let name = name.trim().to_string();
+    (2..=40).contains(&name.chars().count()).then_some(name)
+}
+
+/// Removes the invisible direction marks browsers put around names in Arabic pages (U+202A…U+202E, U+200E/F,
+/// U+2066…U+2069), so a marked-up "Block guide" matches the plain name.
+fn strip_bidi(s: &str) -> String {
+    s.chars().filter(|c| !matches!(c, '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')).collect()
 }
 
 /// Visible top-level windows of Zoom/Teams, or browser tabs titled like a meeting.
@@ -141,6 +209,7 @@ fn clean(raw: Vec<String>) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut names = Vec::new();
     for item in raw {
+        let item = strip_bidi(&item);
         let lower = item.to_lowercase();
         if lower.contains("(me)") || lower.contains("(you)") || item.contains("(أنا)") {
             continue;
@@ -184,6 +253,19 @@ mod tests {
         .map(String::from)
         .to_vec();
         assert_eq!(clean(raw), ["Ahmed Ali", "Amjad", "Zaid", "زيد الحربي"]);
+    }
+
+    #[test]
+    fn who_can_talk_from_real_labels() {
+        // Labels from a real Google Meet call (Arabic UI, with the browser's invisible direction marks).
+        assert_eq!(talking_name("كتم صوت ميكروفون \u{202a}Block guide\u{202c}\u{200f}").as_deref(), Some("Block guide"));
+        assert_eq!(talking_name("لا يمكنك إعادة صوت شخص آخر"), None, "muted: no name");
+        assert_eq!(talking_name("Mute Ahmed Ali's microphone").as_deref(), Some("Ahmed Ali"));
+        assert_eq!(talking_name("Zaid, Computer audio unmuted, Video on").as_deref(), Some("Zaid"));
+        assert_eq!(talking_name("Mohamed Sameh (me), Computer audio unmuted"), None, "never the user");
+        assert_eq!(talking_name("Mute"), None);
+        assert_eq!(talking_name("Mute all"), None);
+        assert_eq!(clean(vec!["\u{202a}\u{202a}Block guide\u{202c}\u{200f}\u{202c}\u{200f}".into()]), ["Block guide"]);
     }
 }
 

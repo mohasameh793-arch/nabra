@@ -52,6 +52,29 @@ fn similarity(a: &[f32], b: &[f32]) -> f32 {
     a.iter().zip(b).map(|(x, y)| x * y).sum()
 }
 
+/// What the meeting app showed, about once a second: (seconds into the call, others who were unmuted/speaking).
+pub type Talking = Arc<Mutex<Vec<(f32, Vec<String>)>>>;
+/// Votes before a voice gets a name from the meeting app (one stray unmute mustn't name the wrong person).
+const NAME_VOTES: u32 = 2;
+
+/// The one other person the meeting app showed as able to talk during most of `t`..`end`, if there was one.
+fn sole_talker(samples: &[(f32, Vec<String>)], t: f32, end: f32) -> Option<String> {
+    let during: Vec<&Vec<String>> = samples.iter().filter(|(at, _)| *at >= t - 1.0 && *at <= end + 1.0).map(|(_, n)| n).collect();
+    let mut counts: std::collections::HashMap<&str, usize> = Default::default();
+    for names in &during {
+        if let [one] = names.as_slice() {
+            *counts.entry(one.as_str()).or_default() += 1;
+        }
+    }
+    counts.into_iter().max_by_key(|(_, c)| *c).filter(|(_, c)| *c * 2 >= during.len().max(1)).map(|(n, _)| n.to_string())
+}
+
+/// A name once it has enough votes and clearly leads them.
+fn voted_name(votes: &std::collections::HashMap<String, u32>) -> Option<String> {
+    let total: u32 = votes.values().sum();
+    votes.iter().max_by_key(|(_, v)| **v).filter(|(_, v)| **v >= NAME_VOTES && **v * 10 >= total * 7).map(|(n, _)| n.clone())
+}
+
 /// Tells the voices on the other side apart: named voices from earlier calls first, then voices heard in
 /// this call, else a new "Speaker N".
 pub struct Voices {
@@ -233,11 +256,29 @@ impl Meeting {
         };
         ready_rx.recv().map_err(|_| "Recording didn't start".to_string())??;
 
+        // Who the meeting app shows as unmuted/speaking, about once a second (same clock as the recording).
+        let talking: Talking = Default::default();
+        {
+            let (stop, talking, clock) = (stop.clone(), talking.clone(), Instant::now());
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::SeqCst) {
+                    let names = crate::attendees::talking();
+                    let mut t = talking.lock().unwrap();
+                    t.push((clock.elapsed().as_secs_f32(), names));
+                    let excess = t.len().saturating_sub(1800); // the last ~30 minutes is plenty
+                    t.drain(..excess);
+                    drop(t);
+                    std::thread::sleep(Duration::from_millis(900));
+                }
+            });
+        }
+
         let worker = {
             let note = note.clone();
             let mut voices = Voices::new(app.state::<App>().store.known_voices());
             std::thread::spawn(move || {
                 let mut next_id = 0;
+                let mut votes: std::collections::HashMap<String, std::collections::HashMap<String, u32>> = Default::default();
                 while let Ok(first) = phrase_rx.recv() {
                     // Take everything queued; a partial is stale if a newer job for the same speaker is waiting,
                     // so live text never falls behind and finished lines are never delayed by it.
@@ -246,7 +287,7 @@ impl Meeting {
                         if job.partial && batch[i + 1..].iter().any(|j| j.source == job.source) {
                             continue;
                         }
-                        handle(&app, &note, &langs, job, &mut next_id, &mut voices);
+                        handle(&app, &note, &langs, job, &mut next_id, &mut voices, &talking, &mut votes);
                     }
                 }
             })
@@ -479,7 +520,17 @@ pub struct Job {
     partial: bool,
 }
 
-fn handle(app: &AppHandle, note: &Mutex<Note>, langs: &str, job: &Job, next_id: &mut u64, voices: &mut Voices) {
+#[allow(clippy::too_many_arguments)]
+fn handle(
+    app: &AppHandle,
+    note: &Mutex<Note>,
+    langs: &str,
+    job: &Job,
+    next_id: &mut u64,
+    voices: &mut Voices,
+    talking: &Talking,
+    votes: &mut std::collections::HashMap<String, std::collections::HashMap<String, u32>>,
+) {
     let who = if job.source == Source::System { "them" } else { "you" };
     let audio = wav(&job.samples, job.rate);
     // The last finished line before this phrase (either side): names and the topic carry over to it.
@@ -531,14 +582,37 @@ fn handle(app: &AppHandle, note: &Mutex<Note>, langs: &str, job: &Job, next_id: 
                     let _ = app.emit("note-drop", serde_json::json!({ "note": n.id, "id": id }));
                 }
             }
+            let mut learned = None;
             let speaker = (who == "them").then(|| {
                 let mut changed = false;
                 let id = voices.assign(&mut n.speakers, &voice, job.t, end, &mut changed);
+                // Name an unnamed voice after whoever the meeting app showed as the only other person able to talk
+                // while it spoke (a name the user typed is never replaced).
+                let sole = sole_talker(&talking.lock().unwrap(), job.t, end);
+                if let (Some(id), Some(name)) = (&id, sole) {
+                    let v = votes.entry(id.clone()).or_default();
+                    *v.entry(name).or_default() += 1;
+                    let taken = |name: &str| n.speakers.iter().any(|s| &s.id != id && s.name.eq_ignore_ascii_case(name));
+                    if let Some(name) = voted_name(v).filter(|name| !taken(name)) {
+                        if let Some(s) = n.speakers.iter_mut().find(|s| &s.id == id && s.name.is_empty()) {
+                            s.name = name.clone();
+                            learned = Some((name.clone(), s.voice.clone(), s.phrases));
+                            if !n.attendees.iter().any(|a| a.eq_ignore_ascii_case(&name)) {
+                                n.attendees.push(name);
+                            }
+                            changed = true;
+                        }
+                    }
+                }
                 if changed {
                     let _ = app.emit("note-speakers", speakers_json(&n));
                 }
                 id
             }).flatten();
+            if let Some((name, voice, phrases)) = learned {
+                // Remember the voice, so the next call knows them even when the meeting window can't be read.
+                let _ = app.state::<App>().store.remember_voice(&name, &voice, phrases);
+            }
             let line = Line { id: *next_id, who: who.into(), text: text.clone(), t: job.t, speaker };
             *next_id += 1;
             n.lines.push(line.clone());
@@ -662,6 +736,25 @@ mod tests {
         assert!(p.buf.is_empty() && (p.start - 60.0).abs() < 1e-3);
         p.feed(&[0.3; 500]);
         assert_eq!(p.next(true).map(|(_, at)| at), Some(60.0), "next phrase is stamped at wall time");
+    }
+
+    #[test]
+    fn names_come_from_who_was_unmuted() {
+        let s = |t: f32, names: &[&str]| (t, names.iter().map(|n| n.to_string()).collect::<Vec<_>>());
+        // Ahmed alone unmuted while the phrase (10..14 s) was said; Zaid unmuted later with Ahmed.
+        let samples = vec![s(9.0, &[]), s(10.0, &["Ahmed"]), s(11.0, &["Ahmed"]), s(12.0, &["Ahmed"]), s(13.0, &["Ahmed"]),
+                           s(30.0, &["Ahmed", "Zaid"]), s(31.0, &["Ahmed", "Zaid"])];
+        assert_eq!(sole_talker(&samples, 10.0, 14.0).as_deref(), Some("Ahmed"));
+        assert_eq!(sole_talker(&samples, 30.0, 31.0), None, "two unmuted: can't tell");
+        assert_eq!(sole_talker(&samples, 50.0, 52.0), None, "no screen data");
+
+        let mut votes = std::collections::HashMap::new();
+        votes.insert("Ahmed".to_string(), 1);
+        assert_eq!(voted_name(&votes), None, "one vote isn't enough");
+        votes.insert("Ahmed".to_string(), 3);
+        assert_eq!(voted_name(&votes).as_deref(), Some("Ahmed"));
+        votes.insert("Zaid".to_string(), 3);
+        assert_eq!(voted_name(&votes), None, "split votes: no name");
     }
 
     #[test]
