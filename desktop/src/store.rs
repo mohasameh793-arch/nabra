@@ -346,6 +346,9 @@ pub struct Speaker {
     pub name: String, // "" until named
     pub voice: Vec<f32>,
     pub phrases: u32,
+    /// The name is Nabra's guess (voice memory or the meeting window), not typed by the user: newer evidence from
+    /// the meeting window may replace it.
+    pub guessed: bool,
 }
 
 /// A voice the user has named, recognised automatically in later calls.
@@ -468,6 +471,18 @@ impl Store {
             }
             Some(k) => *k = KnownVoice { name: name.into(), voice: voice.to_vec(), phrases },
             None => all.push(KnownVoice { name: name.into(), voice: voice.to_vec(), phrases }),
+        }
+        write_atomic(&self.voices_path(), &serde_json::to_vec(&all).unwrap())
+    }
+
+    /// Forget one remembered voice (it was proven wrong: the meeting window showed someone else talking).
+    pub fn forget_voice(&self, name: &str) -> Result<(), String> {
+        let _g = self.guard();
+        let mut all: Vec<KnownVoice> = load_json(&self.voices_path())?;
+        let before = all.len();
+        all.retain(|k| !k.name.eq_ignore_ascii_case(name));
+        if all.len() == before {
+            return Ok(());
         }
         write_atomic(&self.voices_path(), &serde_json::to_vec(&all).unwrap())
     }

@@ -34,6 +34,12 @@ const ECHO_WINDOW_S: f32 = 2.5;
 // ponytail: one fixed similarity bar (cosine, WeSpeaker ResNet34). Raise it if two people get merged, lower it
 // if one person splits into two; per-call adaptive clustering if fixed bars prove too blunt.
 pub const SAME_VOICE: f32 = 0.62;
+/// A voice remembered from an earlier call must match more closely than voices within one call: call audio
+/// (phone, Meet, compression) makes different people sound alike across calls, and a wrong saved name
+/// is worse than "Speaker 1".
+const KNOWN_VOICE: f32 = 0.75;
+/// Matching votes before a voice heard in this call is saved under the name (labelling it needs NAME_VOTES).
+const REMEMBER_VOTES: u32 = 3;
 /// A phrase too short for a voiceprint goes to whoever spoke last on that side, if they spoke this recently.
 const SAME_TURN_S: f32 = 8.0;
 
@@ -87,6 +93,11 @@ impl Voices {
         Self { known, last: None }
     }
 
+    /// Stop matching a remembered voice for the rest of this call (it was proven to be someone else).
+    pub fn drop_known(&mut self, name: &str) {
+        self.known.retain(|k| !k.name.eq_ignore_ascii_case(name));
+    }
+
     /// Returns the speaker id for a phrase at `t`..`end`; `changed` is set when the speaker list changed.
     pub fn assign(&mut self, speakers: &mut Vec<Speaker>, voice: &[f32], t: f32, end: f32, changed: &mut bool) -> Option<String> {
         if voice.is_empty() {
@@ -100,7 +111,7 @@ impl Voices {
             .known
             .iter()
             .map(|k| (similarity(&k.voice, voice), k))
-            .filter(|(s, _)| *s >= SAME_VOICE)
+            .filter(|(s, _)| *s >= KNOWN_VOICE)
             .max_by(|a, b| a.0.total_cmp(&b.0));
         let best_here = speakers
             .iter()
@@ -114,13 +125,19 @@ impl Voices {
             (Some((_, k)), _) => match speakers.iter().position(|s| s.name.eq_ignore_ascii_case(&k.name)) {
                 Some(i) => i,
                 None => {
-                    speakers.push(Speaker { id: format!("s{}", speakers.len() + 1), name: k.name.clone(), voice: voice.to_vec(), phrases: 0 });
+                    speakers.push(Speaker {
+                        id: format!("s{}", speakers.len() + 1),
+                        name: k.name.clone(),
+                        voice: voice.to_vec(),
+                        phrases: 0,
+                        guessed: true,
+                    });
                     *changed = true;
                     speakers.len() - 1
                 }
             },
             _ => {
-                speakers.push(Speaker { id: format!("s{}", speakers.len() + 1), name: String::new(), voice: voice.to_vec(), phrases: 0 });
+                speakers.push(Speaker { id: format!("s{}", speakers.len() + 1), voice: voice.to_vec(), ..Default::default() });
                 *changed = true;
                 speakers.len() - 1
             }
@@ -443,6 +460,7 @@ pub fn name_speaker(app: &AppHandle, note_id: &str, speaker: &str, name: &str) -
     let rename = |n: &mut Note| -> Option<(Vec<f32>, u32)> {
         let s = n.speakers.iter_mut().find(|s| s.id == speaker)?;
         s.name = name.clone();
+        s.guessed = false; // the user's own choice: never replaced automatically
         if !name.is_empty() && !n.attendees.iter().any(|a| a.eq_ignore_ascii_case(&name)) {
             n.attendees.push(name.clone());
         }
@@ -582,7 +600,7 @@ fn handle(
                     let _ = app.emit("note-drop", serde_json::json!({ "note": n.id, "id": id }));
                 }
             }
-            let mut learned = None;
+            let (mut learned, mut wrong) = (None, None);
             let speaker = (who == "them").then(|| {
                 let mut changed = false;
                 let id = voices.assign(&mut n.speakers, &voice, job.t, end, &mut changed);
@@ -593,15 +611,25 @@ fn handle(
                     let v = votes.entry(id.clone()).or_default();
                     *v.entry(name).or_default() += 1;
                     let taken = |name: &str| n.speakers.iter().any(|s| &s.id != id && s.name.eq_ignore_ascii_case(name));
+                    let solid = voted_name(v).is_some_and(|name| v[&name] >= REMEMBER_VOTES);
                     if let Some(name) = voted_name(v).filter(|name| !taken(name)) {
-                        if let Some(s) = n.speakers.iter_mut().find(|s| &s.id == id && s.name.is_empty()) {
+                        // An empty name, or a guess the meeting window now contradicts (e.g. a voice remembered from
+                        // an earlier call that belongs to someone else). A name the user typed is never replaced.
+                        let open = |s: &Speaker| s.name.is_empty() || (s.guessed && !s.name.eq_ignore_ascii_case(&name));
+                        if let Some(s) = n.speakers.iter_mut().find(|s| &s.id == id && open(s)) {
+                            if s.guessed && !s.name.is_empty() {
+                                wrong = Some(std::mem::take(&mut s.name)); // the remembered voice was someone else
+                            }
                             s.name = name.clone();
-                            learned = Some((name.clone(), s.voice.clone(), s.phrases));
+                            s.guessed = true;
                             if !n.attendees.iter().any(|a| a.eq_ignore_ascii_case(&name)) {
-                                n.attendees.push(name);
+                                n.attendees.push(name.clone());
                             }
                             changed = true;
                         }
+                    }
+                    if let Some(s) = n.speakers.iter().find(|s| &s.id == id && s.guessed && solid && !s.name.is_empty()) {
+                        learned = Some((s.name.clone(), s.voice.clone(), s.phrases));
                     }
                 }
                 if changed {
@@ -609,8 +637,14 @@ fn handle(
                 }
                 id
             }).flatten();
+            if let Some(old) = wrong {
+                // A remembered voice put the wrong name on this call: forget it, here and for future calls.
+                voices.drop_known(&old);
+                let _ = app.state::<App>().store.forget_voice(&old);
+            }
             if let Some((name, voice, phrases)) = learned {
-                // Remember the voice, so the next call knows them even when the meeting window can't be read.
+                // Remember the voice (after enough agreement), so the next call knows them even when the meeting
+                // window can't be read.
                 let _ = app.state::<App>().store.remember_voice(&name, &voice, phrases);
             }
             let line = Line { id: *next_id, who: who.into(), text: text.clone(), t: job.t, speaker };
@@ -736,6 +770,25 @@ mod tests {
         assert!(p.buf.is_empty() && (p.start - 60.0).abs() < 1e-3);
         p.feed(&[0.3; 500]);
         assert_eq!(p.next(true).map(|(_, at)| at), Some(60.0), "next phrase is stamped at wall time");
+    }
+
+    #[test]
+    fn remembered_voices_need_a_close_match() {
+        let saved = KnownVoice { name: "Old Name".into(), voice: unit(vec![1.0, 0.0, 0.0]), phrases: 5 };
+        let mut v = Voices::new(vec![saved]);
+        let (mut speakers, mut changed) = (Vec::new(), false);
+        // ~0.70 alike: close enough within a call, not to put an old call's name on a new voice.
+        let similar = unit(vec![0.70, 0.71, 0.0]);
+        v.assign(&mut speakers, &similar, 0.0, 2.0, &mut changed);
+        assert_eq!(speakers[0].name, "", "not named from a loose match");
+        // A really close match is named, and marked as a guess the meeting window may correct.
+        let close = unit(vec![0.97, 0.2, 0.0]);
+        v.assign(&mut speakers, &close, 3.0, 5.0, &mut changed);
+        let named = speakers.iter().find(|s| s.name == "Old Name").expect("close match named");
+        assert!(named.guessed);
+        v.drop_known("Old Name");
+        v.assign(&mut Vec::new(), &close, 6.0, 8.0, &mut changed);
+        assert!(v.known.is_empty(), "a voice proven wrong isn't matched again");
     }
 
     #[test]
