@@ -18,7 +18,9 @@ export function render() {
   const gpu = status.gpu_vram_mb;
   const machine = gpu
     ? `NVIDIA GPU with ${gb(gpu)} of memory found. Nabra will run Whisper large-v3 on it${status.parts.some((p) => p.id === "qwen") ? ", plus a local AI model for cleanup, transforms and call overviews" : ". The local AI model needs about 10 GB of GPU memory, so AI cleanup stays off"}.`
-    : "No NVIDIA GPU found. Nabra will run Whisper large-v3-turbo on your processor. It works, but each dictation takes a few seconds, and AI cleanup and call overviews stay off.";
+    : status.npu
+      ? "Intel NPU found. Nabra will run Whisper large-v3-turbo on it (the first start takes a minute or two while the NPU prepares the model). AI cleanup and call overviews need an NVIDIA GPU, so they stay off."
+      : "No NVIDIA GPU or NPU found. Nabra will run Whisper on your processor. It works, but each dictation takes a few seconds, and AI cleanup and call overviews stay off.";
 
   $("#page-setup").replaceChildren(h("div", { class: "narrow setup" },
     h("div", { class: "page-head" }, h("h1", {}, status.ready ? "Nabra is set up" : "Set up Nabra")),

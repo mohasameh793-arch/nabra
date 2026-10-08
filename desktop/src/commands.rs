@@ -220,6 +220,7 @@ fn setup_status() -> Value {
     let (vram, parts) = assets::plan();
     json!({
         "gpu_vram_mb": vram,
+        "npu": parts.contains(&assets::Part::WhisperNpu),
         "ready": parts.iter().all(|p| p.installed()),
         "speech_ready": assets::speech_ready(),
         "free_mb": assets::free_mb(),
