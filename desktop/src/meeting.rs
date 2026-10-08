@@ -551,8 +551,10 @@ fn handle(
 ) {
     let who = if job.source == Source::System { "them" } else { "you" };
     let audio = wav(&job.samples, job.rate);
-    // The last finished line before this phrase (either side): names and the topic carry over to it.
-    let context = note.lock().unwrap().lines.iter().rev().find(|l| l.t <= job.t).map(|l| l.text.clone()).unwrap_or_default();
+    // The last finished line before this phrase, from the same side: names and the topic carry over to it. Never the
+    // other side's: when talk overlaps, Whisper copied that prompt into this phrase (your words came out as "them",
+    // and the echo check then deleted your real line).
+    let context = note.lock().unwrap().lines.iter().rev().find(|l| l.t <= job.t && l.who == who).map(|l| l.text.clone()).unwrap_or_default();
     let mut text = sidecar::note_chunk(&audio, langs, job.partial, &context);
     // A finished phrase is never thrown away over a hiccup (engine restarting or busy): try again twice.
     for _ in 0..if job.partial { 0 } else { 2 } {

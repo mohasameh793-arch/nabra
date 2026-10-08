@@ -199,7 +199,8 @@ class Transcriber:
                 initial_prompt=prompt + (" " + context if context else ""),
                 condition_on_previous_text=False)  # no repetition loops on long dictations
             text = " ".join(s.text.strip() for s in segments
-                            if not is_hallucination(s.text, prompt) and fold(s.text) != fold(context)).strip()
+                            # a segment copied out of the context (whole or part) was never said in this phrase
+                            if not is_hallucination(s.text, prompt + " " + context) and fold(s.text) != fold(context)).strip()
             return text, language or info.language
 
         text, language = run(forced)
