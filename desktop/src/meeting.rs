@@ -42,6 +42,9 @@ const KNOWN_VOICE: f32 = 0.75;
 const REMEMBER_VOTES: u32 = 3;
 /// A phrase too short for a voiceprint goes to whoever spoke last on that side, if they spoke this recently.
 const SAME_TURN_S: f32 = 8.0;
+/// Your voice is learned from this many clean mic phrases (each costs one voiceprint on the CPU).
+const ME_PHRASES: u32 = 5;
+const ME_MIN_S: f32 = 2.0;
 
 pub fn unit(mut v: Vec<f32>) -> Vec<f32> {
     let n = v.iter().map(|x| x * x).sum::<f32>().sqrt();
@@ -86,11 +89,32 @@ fn voted_name(votes: &std::collections::HashMap<String, u32>) -> Option<String> 
 pub struct Voices {
     known: Vec<KnownVoice>,
     last: Option<(String, f32)>, // (speaker id, end time) of the latest phrase
+    me: Vec<f32>, // your own voice, learned from the microphone during this call
+    me_phrases: u32,
 }
 
 impl Voices {
     pub fn new(known: Vec<KnownVoice>) -> Self {
-        Self { known, last: None }
+        Self { known, last: None, me: Vec::new(), me_phrases: 0 }
+    }
+
+    pub fn learning_me(&self) -> bool {
+        self.me_phrases < ME_PHRASES
+    }
+
+    pub fn learn_me(&mut self, voice: &[f32]) {
+        if voice.is_empty() {
+            return;
+        }
+        let n = self.me_phrases as f32;
+        self.me = if self.me.is_empty() { unit(voice.to_vec()) } else { unit(self.me.iter().zip(voice).map(|(a, b)| a * n + b).collect()) };
+        self.me_phrases += 1;
+    }
+
+    /// A call-audio phrase in your own voice. The bar is the remembered-voice one: losing someone else's line to
+    /// "you" is worse than showing your words twice.
+    pub fn is_me(&self, voice: &[f32]) -> bool {
+        self.me_phrases >= 2 && similarity(&self.me, voice) >= KNOWN_VOICE
     }
 
     /// Stop matching a remembered voice for the rest of this call (it was proven to be someone else).
@@ -588,10 +612,15 @@ fn handle(
     } else {
         Vec::new()
     };
+    // Your own voice in the call audio ("hear yourself" in the meeting app, Windows "Listen to this device", the
+    // other side on speakerphone): it's your line, and if the mic already has it, a copy.
+    let me = who == "them" && voices.is_me(&voice);
+    let (who, voice) = if me { ("you", Vec::new()) } else { (who, voice) };
     let end = job.t + job.samples.len() as f32 / job.rate as f32;
     let line = {
         let mut n = note.lock().unwrap();
-        if text.is_empty() || echo(&n) {
+        let copy = |n: &Note| me && n.lines.iter().filter(near).any(|l| l.who == "you" && is_echo(&l.text, &text));
+        if text.is_empty() || echo(&n) || copy(&n) {
             None
         } else {
             if who == "them" {
@@ -656,6 +685,11 @@ fn handle(
             Some(line)
         }
     };
+    // Learn your voice from mic phrases long enough for a voiceprint and with nobody on the call audio near them.
+    let alone = || !note.lock().unwrap().lines.iter().filter(near).any(|l| l.who == "them");
+    if job.source == Source::Mic && line.is_some() && voices.learning_me() && end - job.t >= ME_MIN_S && alone() {
+        voices.learn_me(&sidecar::voice(&audio).unwrap_or_default());
+    }
     if let Some(line) = line {
         let mut payload = serde_json::to_value(&line).unwrap_or_default();
         payload["note"] = note_id(note).into();
@@ -791,6 +825,22 @@ mod tests {
         v.drop_known("Old Name");
         v.assign(&mut Vec::new(), &close, 6.0, 8.0, &mut changed);
         assert!(v.known.is_empty(), "a voice proven wrong isn't matched again");
+    }
+
+    #[test]
+    fn your_voice_in_the_call_audio_is_you() {
+        let mut v = Voices::new(Vec::new());
+        let you = unit(vec![1.0, 0.1, 0.0]);
+        assert!(!v.is_me(&you), "nothing learned yet");
+        v.learn_me(&[]);
+        v.learn_me(&you);
+        v.learn_me(&unit(vec![0.95, 0.15, 0.05]));
+        assert!(v.is_me(&unit(vec![0.97, 0.12, 0.0])));
+        assert!(!v.is_me(&unit(vec![0.4, 0.9, 0.0])), "a different voice stays theirs");
+        for _ in 0..ME_PHRASES {
+            v.learn_me(&you);
+        }
+        assert!(!v.learning_me(), "stops after enough phrases");
     }
 
     #[test]
