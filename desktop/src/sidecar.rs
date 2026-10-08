@@ -197,12 +197,12 @@ pub fn start(app: &tauri::AppHandle, opts: Launch) -> Result<(), String> {
     // Speech model chosen by first-run setup: large-v3 on an NVIDIA GPU, turbo on a strong processor, small on a
     // weak laptop, or when Nabra measured turbo as too slow here and the user switched to the light model.
     let small = Part::WhisperSmall.installed() && (assets::prefers_light() || !Part::WhisperCpu.installed());
-    if Part::WhisperGpu.installed() {
-        args.extend(["--whisper".into(), assets::whisper_gpu().display().to_string()]);
-    } else if Part::WhisperNpu.installed() && Part::OpenVino.installed() && !assets::prefers_light() {
-        // Intel NPU PCs: OpenVINO picks the NPU, else Intel graphics, else the processor.
+    // NPU first (OpenVINO falls back to Intel graphics, then the processor), then NVIDIA, then the processor.
+    if Part::WhisperNpu.installed() && Part::OpenVino.installed() && !assets::prefers_light() {
         args.extend(["--whisper".into(), assets::whisper_npu().display().to_string()]);
         args.extend(["--openvino".into(), assets::openvino().display().to_string()]);
+    } else if Part::WhisperGpu.installed() {
+        args.extend(["--whisper".into(), assets::whisper_gpu().display().to_string()]);
     } else if small {
         args.extend(["--whisper".into(), assets::whisper_small().display().to_string()]);
     } else if Part::WhisperCpu.installed() {

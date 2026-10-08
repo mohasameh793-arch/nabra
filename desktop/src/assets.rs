@@ -281,24 +281,25 @@ fn cpu_tier(ram_mb: u64, threads: usize, has_turbo: bool) -> Part {
     }
 }
 
-/// What this PC should have, speech first: NVIDIA GPU → CUDA + large-v3 (+ the LLM when the card allows); Intel
-/// NPU → OpenVINO + turbo (NPU, else Intel graphics, else processor); a strong processor → turbo; a weak one → small.
-/// NVIDIA goes before the NPU: large-v3 there is both faster and more accurate (benchmark: 32% vs 38% words wrong
-/// before cleanup), and the local AI cleanup needs the card anyway.
+/// What this PC should have, speech first (the user's order): Intel NPU → OpenVINO + turbo (NPU, else Intel
+/// graphics, else processor); else NVIDIA GPU → CUDA + large-v3; else a strong processor → turbo, a weak one → small.
+/// The local AI model (cleanup, lists, summaries) runs only on an NVIDIA card, so it comes with one even when speech
+/// is on the NPU.
 pub fn plan() -> (Option<u64>, Vec<Part>) {
     let g = gpu();
-    let parts = match g {
-        Some((mb, cap)) if cap >= GPU_MIN_CAP && mb >= GPU_MIN_VRAM_MB => {
-            let mut p = vec![Part::Cuda, Part::WhisperGpu];
-            if mb >= LLM_MIN_VRAM_MB && cap >= LLM_MIN_CAP {
-                p.extend([Part::Llama, Part::Qwen]);
-            }
-            p
-        }
-        _ if npu() && !prefers_light() => vec![Part::OpenVino, Part::WhisperNpu],
-        _ if prefers_light() => vec![Part::WhisperSmall],
-        _ => vec![cpu_tier(ram_mb(), threads(), Part::WhisperCpu.installed())],
+    let nvidia = g.is_some_and(|(mb, cap)| cap >= GPU_MIN_CAP && mb >= GPU_MIN_VRAM_MB);
+    let mut parts = if npu() && !prefers_light() {
+        vec![Part::OpenVino, Part::WhisperNpu]
+    } else if nvidia {
+        vec![Part::Cuda, Part::WhisperGpu]
+    } else if prefers_light() {
+        vec![Part::WhisperSmall]
+    } else {
+        vec![cpu_tier(ram_mb(), threads(), Part::WhisperCpu.installed())]
     };
+    if g.is_some_and(|(mb, cap)| nvidia && mb >= LLM_MIN_VRAM_MB && cap >= LLM_MIN_CAP) {
+        parts.extend([Part::Llama, Part::Qwen]);
+    }
     (g.map(|g| g.0), parts)
 }
 
@@ -315,6 +316,7 @@ pub fn prefers_light() -> bool {
 /// has; Setup offers the new parts.
 pub fn speech_ready() -> bool {
     plan().1.iter().filter(|p| p.is_speech()).all(|p| p.installed())
+        || Part::WhisperGpu.installed()
         || Part::WhisperCpu.installed()
         || Part::WhisperSmall.installed()
 }
