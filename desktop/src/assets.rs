@@ -23,6 +23,21 @@ pub const QWEN_FILE: &str = "Qwen3-8B-Q4_K_M.gguf";
 const LLAMA_TAG: &str = "b11200";
 const LLAMA_ASSETS: [&str; 2] = ["llama-b11200-bin-win-cuda-13.4-x64.zip", "cudart-llama-bin-win-cuda-13.4-x64.zip"];
 const CUDA_WHEELS: [(&str, &str); 2] = [("nvidia-cublas-cu12", "12.9.2.10"), ("nvidia-cudnn-cu12", "9.27.0.42")];
+/// Intel NPU PCs: Whisper turbo converted for OpenVINO, plus the OpenVINO runtime (Python packages, kept out of the
+/// engine executable because only these PCs need its 85 MB).
+const WHISPER_NPU_REPO: &str = "OpenVINO/whisper-large-v3-turbo-int8-ov";
+const WHISPER_NPU_FILES: [&str; 19] = [
+    "added_tokens.json", "config.json", "generation_config.json", "merges.txt", "normalizer.json", "openvino_config.json",
+    "openvino_decoder_model.bin", "openvino_decoder_model.xml", "openvino_detokenizer.bin", "openvino_detokenizer.xml",
+    "openvino_encoder_model.bin", "openvino_encoder_model.xml", "openvino_tokenizer.bin", "openvino_tokenizer.xml",
+    "preprocessor_config.json", "special_tokens_map.json", "tokenizer.json", "tokenizer_config.json", "vocab.json",
+];
+/// (package, version, wheel file suffix): must match the engine's Python (3.12) and its numpy (< 2.6).
+const OPENVINO_WHEELS: [(&str, &str, &str); 3] = [
+    ("openvino", "2026.4.1", "cp312-cp312-win_amd64.whl"),
+    ("openvino-genai", "2026.4.1.0", "cp312-cp312-win_amd64.whl"),
+    ("openvino-tokenizers", "2026.4.1.0", "py3-none-win_amd64.whl"),
+];
 /// The local LLM needs ~6 GB of VRAM next to Whisper's ~4 GB.
 const LLM_MIN_VRAM_MB: u64 = 10_000;
 
@@ -33,7 +48,30 @@ const WHISPER_GPU_REV: &str = "edaa852ec7e145841d8ffdb056a99866b5f0a478";
 const WHISPER_CPU_REV: &str = "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf";
 const QWEN_REV: &str = "7c41481f57cb95916b40956ab2f0b139b296d974";
 const WHISPER_SMALL_REV: &str = "536b0662742c02347bc0e980a01041f333bce120";
+const WHISPER_NPU_REV: &str = "b568445dd5dc8c695bde596f8acbb4694fd6ba64";
 const PINS: &[(&str, &str, u64)] = &[
+    ("OpenVINO/whisper-large-v3-turbo-int8-ov/added_tokens.json", "3c51f66c4c21f9e126970078f11ae77a78c74aee8df606ee9daba86e467108e0", 34648),
+    ("OpenVINO/whisper-large-v3-turbo-int8-ov/config.json", "bfd92c097547ab12cb42abae8008be5a59a91fdc5ab39acce24489eb8a3e8a86", 1192),
+    ("OpenVINO/whisper-large-v3-turbo-int8-ov/generation_config.json", "4617fcca458af3b91a103143aaac919c1ab6680b552d7abd10811b7248bd77b4", 3767),
+    ("OpenVINO/whisper-large-v3-turbo-int8-ov/merges.txt", "2df2990a395e35e8dfbc7511e08c12d56018d8d04691e0133e5d63b21e154dc6", 493869),
+    ("OpenVINO/whisper-large-v3-turbo-int8-ov/normalizer.json", "bf1c507dc8724ca9cf9903640dacfb69dae2f00edee4f21ceba106a7392f26dd", 52666),
+    ("OpenVINO/whisper-large-v3-turbo-int8-ov/openvino_config.json", "9da38e88cec069ad54699d627f1c59d36c36a3dfb54b5e1bb5cfdf5832efaf03", 622),
+    ("OpenVINO/whisper-large-v3-turbo-int8-ov/openvino_decoder_model.bin", "c064991cbafc4381567d29972b7013dc24026de9c326d03eb1e6e4fc44aa959f", 172534710),
+    ("OpenVINO/whisper-large-v3-turbo-int8-ov/openvino_decoder_model.xml", "aeb09fafbf1c0cbf84baf30f46763436005822faf3b365359b8de0aa04f03047", 391642),
+    ("OpenVINO/whisper-large-v3-turbo-int8-ov/openvino_detokenizer.bin", "f2b3c47825a1089525ff65c0c8e49271e1dee69a401a04fc827ac2de5b7766e4", 736198),
+    ("OpenVINO/whisper-large-v3-turbo-int8-ov/openvino_detokenizer.xml", "6e106a14f14b0771b46b7948a99b1d819ff93b2455b7da8f47761ab9dba9dc56", 9779),
+    ("OpenVINO/whisper-large-v3-turbo-int8-ov/openvino_encoder_model.bin", "0590a8f35f96d57801c55990028d917821ac721026e34b7f3f59d7561fc908e6", 645332592),
+    ("OpenVINO/whisper-large-v3-turbo-int8-ov/openvino_encoder_model.xml", "60713d4ed3a8ac8ee020e11c4737ec276d14cabc6a082537bddf2c00ba6ce070", 1518660),
+    ("OpenVINO/whisper-large-v3-turbo-int8-ov/openvino_tokenizer.bin", "adfa3d9a2920d0f314121270a960ab331ec0f05838544bb8ecaaa422282a6fd4", 1898973),
+    ("OpenVINO/whisper-large-v3-turbo-int8-ov/openvino_tokenizer.xml", "cba304e7bad54773b9d2cbccfbc8501117ecf2e3c0f4f5331742a0a3c9feed93", 27091),
+    ("OpenVINO/whisper-large-v3-turbo-int8-ov/preprocessor_config.json", "654cf18d3e163b948ceaf9766da56ce0b52de265d58673cf61c9376f126bd499", 357),
+    ("OpenVINO/whisper-large-v3-turbo-int8-ov/special_tokens_map.json", "baea4ea09372eb4fca86b4e4346139fd73cb807d5087e9de0948e971739c3e74", 2186),
+    ("OpenVINO/whisper-large-v3-turbo-int8-ov/tokenizer.json", "5c1bf30c9e716e1477bedef846b01be0013daecb89e9e3ef7ab89b23c178df1b", 3930645),
+    ("OpenVINO/whisper-large-v3-turbo-int8-ov/tokenizer_config.json", "3c75940dfce3a294fca7041a5faff011677f1b68fa85e47511bb8cf6dccaded6", 282873),
+    ("OpenVINO/whisper-large-v3-turbo-int8-ov/vocab.json", "6788c80b082e9b0d1393147d3a3e62ba19285ac0c82ace8e5ef00f37ead58971", 835528),
+    ("pypi/openvino", "4e04316abff1b99e29b8cbd38deaef9bde4739eba216d982d4b3981e456ecd87", 84964415),
+    ("pypi/openvino-genai", "9ca3545173020d758693d7e484ec6660fb5665ee149d0de0fb6b126d95f881c5", 3888058),
+    ("pypi/openvino-tokenizers", "e6250eae9d00704249d21bfd8ad1600de2e49635aa2dcbb6e54a6aa9087f052d", 1560547),
     ("Systran/faster-whisper-large-v3/config.json", "a9306624f5ec14270a014b647e5c316b6e03a662c369758d1b90697a7b0655b9", 2394),
     ("Systran/faster-whisper-large-v3/model.bin", "69f74147e3334731bc3a76048724833325d2ec74642fb52620eda87352e3d4f1", 3087284237),
     ("Systran/faster-whisper-large-v3/preprocessor_config.json", "7ccc62c6f2765af1f3b46c00c9b5894426835a05021c8b9c01eecb6dfb542711", 340),
@@ -77,8 +115,35 @@ pub fn whisper_cpu() -> PathBuf {
 pub fn whisper_small() -> PathBuf {
     dir().join("whisper").join("small")
 }
+pub fn whisper_npu() -> PathBuf {
+    dir().join("whisper").join("large-v3-turbo-openvino")
+}
+pub fn openvino() -> PathBuf {
+    dir().join("openvino")
+}
 pub fn cuda() -> PathBuf {
     dir().join("cuda")
+}
+
+/// An Intel NPU ("Intel(R) AI Boost", Core Ultra processors) with its driver installed. Asked once per run.
+pub fn npu() -> bool {
+    static FOUND: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FOUND.get_or_init(|| {
+        use std::os::windows::process::CommandExt;
+        std::process::Command::new("pnputil")
+            .args(["/enum-devices", "/class", "ComputeAccelerator", "/connected"])
+            .creation_flags(0x0800_0000)
+            .output()
+            .map(|o| is_intel_npu(&String::from_utf8_lossy(&o.stdout)))
+            .unwrap_or(false)
+    })
+}
+
+fn is_intel_npu(pnputil: &str) -> bool {
+    pnputil.lines().any(|l| {
+        let l = l.to_ascii_lowercase();
+        l.contains("intel") && (l.contains("ai boost") || l.contains("npu"))
+    })
 }
 pub fn llama_server() -> PathBuf {
     dir().join("llama").join("llama-server.exe")
@@ -104,7 +169,7 @@ pub fn ensure_voice_model() -> Result<(), String> {
         dest: voice_model(),
         size: VOICE_MODEL_BYTES,
         sha256: Some(VOICE_MODEL_SHA256.into()),
-        unzip: None,
+        ..Default::default()
     };
     fetch(&f, |_| {})
 }
@@ -136,6 +201,8 @@ pub enum Part {
     WhisperGpu,
     WhisperCpu,
     WhisperSmall,
+    OpenVino,
+    WhisperNpu,
     Llama,
     Qwen,
 }
@@ -147,6 +214,8 @@ impl Part {
             Part::WhisperGpu => "Speech recognition: Whisper large-v3",
             Part::WhisperCpu => "Speech recognition: Whisper large-v3-turbo (CPU)",
             Part::WhisperSmall => "Speech recognition: Whisper small (light, for this laptop)",
+            Part::OpenVino => "Intel OpenVINO runtime (runs speech on the NPU)",
+            Part::WhisperNpu => "Speech recognition: Whisper large-v3-turbo (NPU)",
             Part::Llama => "Local AI server: llama.cpp (CUDA)",
             Part::Qwen => "Local AI model: Qwen3 8B",
         }
@@ -159,6 +228,8 @@ impl Part {
             Part::WhisperGpu => 3_100,
             Part::WhisperCpu => 1_600,
             Part::WhisperSmall => 490,
+            Part::OpenVino => 90,
+            Part::WhisperNpu => 790,
             Part::Llama => 580,
             Part::Qwen => 5_030,
         }
@@ -170,6 +241,8 @@ impl Part {
             Part::WhisperGpu => whisper_gpu().join(".complete").exists(),
             Part::WhisperCpu => whisper_cpu().join(".complete").exists(),
             Part::WhisperSmall => whisper_small().join(".complete").exists(),
+            Part::OpenVino => openvino().join(".complete").exists(),
+            Part::WhisperNpu => whisper_npu().join(".complete").exists(),
             Part::Llama => llama_server().exists() && dir().join("llama").join(".complete").exists(),
             Part::Qwen => qwen().exists(),
         }
@@ -208,8 +281,10 @@ fn cpu_tier(ram_mb: u64, threads: usize, has_turbo: bool) -> Part {
     }
 }
 
-/// What this PC should have, speech first: GPU → CUDA + large-v3 (+ the LLM when the card allows); a strong
-/// processor → turbo; a weak laptop → small.
+/// What this PC should have, speech first: NVIDIA GPU → CUDA + large-v3 (+ the LLM when the card allows); Intel
+/// NPU → OpenVINO + turbo (NPU, else Intel graphics, else processor); a strong processor → turbo; a weak one → small.
+/// NVIDIA goes before the NPU: large-v3 there is both faster and more accurate (benchmark: 32% vs 38% words wrong
+/// before cleanup), and the local AI cleanup needs the card anyway.
 pub fn plan() -> (Option<u64>, Vec<Part>) {
     let g = gpu();
     let parts = match g {
@@ -220,6 +295,7 @@ pub fn plan() -> (Option<u64>, Vec<Part>) {
             }
             p
         }
+        _ if npu() && !prefers_light() => vec![Part::OpenVino, Part::WhisperNpu],
         _ if prefers_light() => vec![Part::WhisperSmall],
         _ => vec![cpu_tier(ram_mb(), threads(), Part::WhisperCpu.installed())],
     };
@@ -235,13 +311,17 @@ pub fn prefers_light() -> bool {
 }
 
 /// Dictation can start: the speech parts are in (the local AI model may still be downloading).
+/// A PC set up before its plan changed (e.g. an NPU PC that has the processor model) keeps dictating with what it
+/// has; Setup offers the new parts.
 pub fn speech_ready() -> bool {
     plan().1.iter().filter(|p| p.is_speech()).all(|p| p.installed())
+        || Part::WhisperCpu.installed()
+        || Part::WhisperSmall.installed()
 }
 
 impl Part {
     pub fn is_speech(self) -> bool {
-        matches!(self, Part::Cuda | Part::WhisperGpu | Part::WhisperCpu | Part::WhisperSmall)
+        matches!(self, Part::Cuda | Part::WhisperGpu | Part::WhisperCpu | Part::WhisperSmall | Part::OpenVino | Part::WhisperNpu)
     }
 }
 
@@ -259,14 +339,15 @@ pub fn free_mb() -> Option<u64> {
 // --- resolving pinned sources ---------------------------------------------------------------
 
 /// One file to fetch. `unzip`: extract the archive into `dest`'s folder, keeping entries that pass the
-/// filter (flattened), then delete the archive.
-#[derive(Clone, Debug)]
+/// filter (flattened, unless `tree`: a Python package keeps its folders), then delete the archive.
+#[derive(Clone, Debug, Default)]
 pub struct Fetch {
     pub url: String,
     pub dest: PathBuf,
     pub size: u64,
     pub sha256: Option<String>,
     pub unzip: Option<fn(&str) -> bool>,
+    pub tree: bool,
 }
 
 fn get_json(url: &str) -> Result<Value, String> {
@@ -290,7 +371,7 @@ fn hf_files(repo: &str, rev: &str, wanted: &[&str], into: &Path) -> Result<Vec<F
                 dest: into.join(name),
                 size,
                 sha256: Some(sha256),
-                unzip: None,
+                ..Default::default()
             })
         })
         .collect()
@@ -321,12 +402,33 @@ pub fn resolve(part: Part) -> Result<Vec<Fetch>, String> {
                     size,
                     sha256: Some(sha256),
                     unzip: Some(is_dll), // a wheel is a zip; keep only nvidia/*/bin/*.dll
+                    tree: false,
                 })
             })
             .collect(),
         Part::WhisperGpu => hf_files(WHISPER_GPU_REPO, WHISPER_GPU_REV, &WHISPER_FILES, &whisper_gpu()),
         Part::WhisperCpu => hf_files(WHISPER_CPU_REPO, WHISPER_CPU_REV, &WHISPER_FILES, &whisper_cpu()),
         Part::WhisperSmall => hf_files(WHISPER_SMALL_REPO, WHISPER_SMALL_REV, &WHISPER_SMALL_FILES, &whisper_small()),
+        Part::WhisperNpu => hf_files(WHISPER_NPU_REPO, WHISPER_NPU_REV, &WHISPER_NPU_FILES, &whisper_npu()),
+        Part::OpenVino => OPENVINO_WHEELS
+            .iter()
+            .map(|(name, version, suffix)| {
+                let meta = get_json(&format!("https://pypi.org/pypi/{name}/{version}/json"))?;
+                let wheel = meta["urls"]
+                    .as_array()
+                    .and_then(|u| u.iter().find(|w| w["filename"].as_str().is_some_and(|f| f.ends_with(suffix))))
+                    .ok_or(format!("No Windows package for {name}"))?;
+                let (sha256, size) = pin(&format!("pypi/{name}"))?;
+                Ok(Fetch {
+                    url: wheel["url"].as_str().unwrap_or_default().into(),
+                    dest: openvino().join(format!("{name}.whl")),
+                    size,
+                    sha256: Some(sha256),
+                    unzip: Some(keep_all),
+                    tree: true, // the engine imports these packages from this folder
+                })
+            })
+            .collect(),
         Part::Qwen => hf_files(QWEN_REPO, QWEN_REV, &[QWEN_FILE], &dir().join("models")),
         Part::Llama => LLAMA_ASSETS
             .iter()
@@ -338,6 +440,7 @@ pub fn resolve(part: Part) -> Result<Vec<Fetch>, String> {
                     size,
                     sha256: Some(sha256),
                     unzip: Some(keep_all),
+                    tree: false,
                 })
             })
             .collect(),
@@ -415,7 +518,7 @@ pub fn fetch(f: &Fetch, mut progress: impl FnMut(u64)) -> Result<(), String> {
     }
     match f.unzip {
         Some(keep) => {
-            extract(&part, folder, keep)?;
+            extract(&part, folder, keep, f.tree)?;
             let _ = fs::remove_file(&part);
         }
         None => fs::rename(&part, &f.dest).map_err(|e| e.to_string())?,
@@ -423,8 +526,9 @@ pub fn fetch(f: &Fetch, mut progress: impl FnMut(u64)) -> Result<(), String> {
     Ok(())
 }
 
-/// Extracts archive entries that pass `keep` into `into` (flattened to file names; no path tricks possible).
-fn extract(archive: &Path, into: &Path, keep: fn(&str) -> bool) -> Result<(), String> {
+/// Extracts archive entries that pass `keep` into `into`: flattened to file names, or with `tree` keeping their
+/// folders. Either way no path tricks are possible (`..`, absolute paths and drive letters are skipped).
+fn extract(archive: &Path, into: &Path, keep: fn(&str) -> bool, tree: bool) -> Result<(), String> {
     let mut zip = zip::ZipArchive::new(File::open(archive).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
     for i in 0..zip.len() {
         let mut entry = zip.by_index(i).map_err(|e| e.to_string())?;
@@ -432,8 +536,17 @@ fn extract(archive: &Path, into: &Path, keep: fn(&str) -> bool) -> Result<(), St
         if entry.is_dir() || !keep(&name) {
             continue;
         }
-        let Some(file_name) = Path::new(&name).file_name() else { continue };
-        let mut out = File::create(into.join(file_name)).map_err(|e| e.to_string())?;
+        let dest = if tree {
+            let Some(rel) = entry.enclosed_name() else { continue };
+            into.join(rel)
+        } else {
+            let Some(file_name) = Path::new(&name).file_name() else { continue };
+            into.join(file_name)
+        };
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        let mut out = File::create(dest).map_err(|e| e.to_string())?;
         std::io::copy(&mut entry, &mut out).map_err(|e| e.to_string())?;
     }
     Ok(())
@@ -446,6 +559,8 @@ pub fn mark_complete(part: Part) {
         Part::WhisperGpu => whisper_gpu(),
         Part::WhisperCpu => whisper_cpu(),
         Part::WhisperSmall => whisper_small(),
+        Part::OpenVino => openvino(),
+        Part::WhisperNpu => whisper_npu(),
         Part::Llama => dir().join("llama"),
         Part::Qwen => return, // a single file: its presence is the marker
     };
@@ -470,11 +585,24 @@ mod tests {
             }
             w.finish().unwrap();
         }
-        extract(&archive, &tmp, is_dll).unwrap();
+        extract(&archive, &tmp, is_dll, false).unwrap();
         assert!(tmp.join("cublas64_12.dll").exists());
         assert!(!tmp.join("x.h").exists());
         assert!(!tmp.parent().unwrap().parent().unwrap().join("evil.dll").exists()); // no escaping the folder
+        // A Python package keeps its folders, still without escaping.
+        let tree = tmp.join("tree");
+        extract(&archive, &tree, keep_all, true).unwrap();
+        assert!(tree.join("nvidia/cublas/include/x.h").exists());
+        assert!(!tmp.parent().unwrap().join("evil.dll").exists() && !tree.join("evil.dll").exists());
         let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn finds_intel_npu_in_pnputil_output() {
+        assert!(is_intel_npu("Instance ID: PCI\\VEN_8086\r\nDevice Description:      Intel(R) AI Boost\r\n"));
+        assert!(!is_intel_npu("Device Description:      NVIDIA GeForce RTX 5070 Ti\r\n"));
+        assert!(!is_intel_npu("No devices were found on the system.\r\n"));
+        assert!(PINS.iter().any(|p| p.0 == "OpenVINO/whisper-large-v3-turbo-int8-ov/openvino_encoder_model.bin"));
     }
 
     #[test]

@@ -199,6 +199,10 @@ pub fn start(app: &tauri::AppHandle, opts: Launch) -> Result<(), String> {
     let small = Part::WhisperSmall.installed() && (assets::prefers_light() || !Part::WhisperCpu.installed());
     if Part::WhisperGpu.installed() {
         args.extend(["--whisper".into(), assets::whisper_gpu().display().to_string()]);
+    } else if Part::WhisperNpu.installed() && Part::OpenVino.installed() && !assets::prefers_light() {
+        // Intel NPU PCs: OpenVINO picks the NPU, else Intel graphics, else the processor.
+        args.extend(["--whisper".into(), assets::whisper_npu().display().to_string()]);
+        args.extend(["--openvino".into(), assets::openvino().display().to_string()]);
     } else if small {
         args.extend(["--whisper".into(), assets::whisper_small().display().to_string()]);
     } else if Part::WhisperCpu.installed() {

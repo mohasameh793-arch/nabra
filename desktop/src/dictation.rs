@@ -506,7 +506,12 @@ impl Controller {
         });
         match started {
             Ok(health) => {
-                let gpu = if health.device == "cuda" { "GPU" } else { "CPU" };
+                // cuda = NVIDIA; npu / gpu (Intel graphics) / cpu = what OpenVINO or the processor path runs on.
+                let gpu = match health.device.as_str() {
+                    "cuda" | "gpu" => "GPU",
+                    "npu" => "NPU",
+                    _ => "CPU",
+                };
                 let updated = self.state().updated_to.lock().unwrap().take();
                 match updated {
                     Some(v) => self.done(format!("Nabra updated to {v}"), "Ready"),

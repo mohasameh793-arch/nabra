@@ -169,7 +169,7 @@ async function body() {
             ev.target.textContent = "Check for updates";
           }
         } }, "Check for updates")),
-        field("Speech engine", "Whisper large-v3, local", h("span", {}, e ? (e.device === "cuda" ? "Running on GPU" : "Running on CPU") : "Starting…")),
+        field("Speech engine", "Whisper, on this PC", h("span", {}, e ? `Running on ${({ cuda: "the NVIDIA GPU", npu: "the NPU", gpu: "Intel graphics" })[e.device] || "the processor"}` : "Starting…")),
         field("AI cleanup & overviews", "Qwen3 8B, local", h("span", {}, e?.llm ? "Ready" : "Off")),
         field("Models", "Speech and AI models downloaded during setup.",
           h("button", { class: "btn", onclick: () => { $("#settings-modal").close(); import("../hub.js").then((m) => m.go("setup")); } }, "Open setup")),

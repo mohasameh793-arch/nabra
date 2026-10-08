@@ -91,9 +91,54 @@ def _cuda_dlls_on_path(cuda_dir: Path | None) -> None:
         os.environ["PATH"] = str(d) + os.pathsep + os.environ["PATH"]
 
 
+class _Text:
+    def __init__(self, text: str = "", language: str | None = None):
+        self.text, self.language = text, language
+
+
+class OpenVinoWhisper:
+    """Whisper through Intel OpenVINO, for PCs with an Intel NPU: tries the NPU, then Intel graphics, then the
+    processor. Answers like faster-whisper's WhisperModel (only what Transcriber uses), so every safety check
+    in Transcriber.transcribe applies unchanged."""
+
+    def __init__(self, model: str):
+        import openvino as ov
+        import openvino_genai as genai
+
+        core = ov.Core()
+        # "GPU" is OpenVINO's Intel graphics; an NVIDIA card it may list is Nabra's CUDA path, not this one.
+        devices = [d for d in ("NPU", "GPU", "CPU") if d in core.available_devices
+                   and not (d == "GPU" and "NVIDIA" in core.get_property(d, "FULL_DEVICE_NAME"))]
+        self.model, self.pipe = model, None
+        for d in devices:
+            try:  # the NPU compiles the model on first use: a minute or two once, then it's cached
+                self.pipe, self.device = genai.WhisperPipeline(model, d, CACHE_DIR=str(Path(model) / "cache")), d.lower()
+                break
+            except Exception as err:  # no driver, unsupported model, out of memory
+                log.warning("OpenVINO %s unavailable (%s: %s)", d, type(err).__name__, err)
+        if self.pipe is None:
+            raise RuntimeError("OpenVINO couldn't load the speech model on any device")
+        self.supported_languages = [k.strip("<|>") for k in self.pipe.get_generation_config().lang_to_id]
+        self.pipe.generate([0.0] * SAMPLE_RATE, task="transcribe")  # first run sets the device up: pay it now
+
+    def transcribe(self, audio, language=None, initial_prompt=None, **_):
+        kw = {"language": f"<|{language}|>"} if language else {}
+        if initial_prompt:
+            kw["initial_prompt"] = initial_prompt
+        r = self.pipe.generate(audio.tolist(), task="transcribe", **kw)
+        detected = (getattr(r, "language", None) or language or "").strip("<|>") or None
+        return [_Text(str(r).strip())], _Text(language=detected)
+
+
 class Transcriber:
     def __init__(self, model: str = "large-v3", cuda_dir: Path | None = None):
-        """`model`: a local model folder (what the app downloads) or a faster-whisper model name."""
+        """`model`: a local model folder (what the app downloads) or a faster-whisper model name. A folder with an
+        OpenVINO model (openvino_encoder_model.xml) runs on the NPU / Intel graphics / processor via OpenVINO."""
+        self.openvino = (Path(model) / "openvino_encoder_model.xml").exists()
+        if self.openvino:
+            self.model = OpenVinoWhisper(model)
+            self.device = self.model.device
+            return
         _cuda_dlls_on_path(cuda_dir)
         from faster_whisper import WhisperModel
 
@@ -138,8 +183,11 @@ class Transcriber:
         audio = decode_audio(io.BytesIO(wav), sampling_rate=SAMPLE_RATE)
         if len(audio) < SAMPLE_RATE * 0.3 or np.sqrt(np.mean(audio ** 2)) < SILENCE_RMS:
             return "", None
-        forced, best = self.choose_language(audio, allowed, strict) if detect else (None, None)
-        arabic_in_play = not allowed or "ar" in allowed
+        # OpenVINO has no separate language check (detection happens inside the decode, then the retries below
+        # catch a language the user doesn't speak), and the Arabic example sentence makes it write English speech
+        # as Arabic (measured), so it gets the vocabulary only.
+        forced, best = self.choose_language(audio, allowed, strict) if detect and not self.openvino else (None, None)
+        arabic_in_play = (not allowed or "ar" in allowed) and not self.openvino
         prompt = (MIXED_EXAMPLES.get(dialect, MIXED_EXAMPLE) + " " if arabic_in_play else "") + ", ".join(vocabulary) + "."
         context = context.strip()[-200:]
         if self.device == "cpu":
