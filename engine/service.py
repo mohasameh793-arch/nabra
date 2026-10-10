@@ -58,7 +58,7 @@ class Engine:
         t0 = time.perf_counter()
         vocab = self.lexicon.prompt_terms()
         with self.gpu:
-            raw, language = self.speech.transcribe(wav, langs, vocab, dialect=dialect)
+            raw, language = self.speech.transcribe(wav, langs, vocab, dialect=dialect, strict=True)  # only the user's languages
         text, fixes = raw, {"terms": 0, "dictionary": 0, "ai": 0, "snippets": 0}
         if raw and mode != "raw":
             text, fixes["terms"], fixes["dictionary"] = self.lexicon.restore_counted(raw)

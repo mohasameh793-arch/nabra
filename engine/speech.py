@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
-from textnorm import fold
+from textnorm import fold, is_arabic
 
 log = logging.getLogger("nabra.speech")
 
@@ -25,6 +25,12 @@ MIXED_EXAMPLE = MIXED_EXAMPLES["gulf"]
 # Below this, detection is a guess (Gulf Arabic → "Persian"); above it the speaker really is using
 # that language, and forcing another one would make Whisper TRANSLATE instead of transcribe.
 CONFIDENT_DETECTION = 0.8
+# English said with an Arabic accent is often detected as Arabic, and Whisper told "Arabic" then TRANSLATES the English
+# (measured: "Thanks, Nabra" -> «شكراً نابرا», detection ar 0.60 / en 0.18). When a result with Arabic in it came from
+# audio that was at least this likely English, it is also decoded as English and the better-fitting decode wins.
+# Measured on 38 clips: accented English 0.04-0.18; Arabic in every dialect and mixed Arabic/English at most 0.021, so
+# ordinary Arabic dictation never pays for the second decode.
+MAYBE_ENGLISH = 0.03
 # Quieter than this is silence/fan noise (~-50 dBFS); Whisper "hears" Thank you. in it.
 SILENCE_RMS = 0.003
 # What Whisper says over silence (trained on subtitled video). Compared folded, whole segment only.
@@ -158,19 +164,21 @@ class Transcriber:
         # The first decode initializes CUDA kernels and the VAD model (~2–3 s). Pay that now.
         list(self.model.transcribe(np.zeros(SAMPLE_RATE, np.float32), language="en", vad_filter=True)[0])
 
-    def choose_language(self, audio: np.ndarray, allowed: list[str], strict: bool = False) -> tuple[str | None, str | None]:
-        """(forced, best allowed). forced None = let Whisper detect per segment (keeps Arabic/English mixing).
+    def choose_language(self, audio: np.ndarray, allowed: list[str],
+                        strict: bool = False) -> tuple[str | None, str | None, dict[str, float]]:
+        """(forced, best allowed, probability of each language). forced None = let Whisper detect per segment (keeps Arabic/English mixing).
         strict (call notes): another language is never kept, however sure Whisper is: short, noisy call audio is
         where it is confidently wrong (Japanese, Welsh…), and the user picked the languages they speak."""
         if not allowed:
-            return None, None
+            return None, None, {}
         _, _, ranked = self.model.detect_language(audio, vad_filter=True)
+        probs = dict(ranked)
         in_list = [(code, p) for code, p in ranked if code in allowed]
         best = max(in_list, key=lambda x: x[1])[0] if in_list else allowed[0]
         top, top_p = ranked[0] if ranked else (None, 0.0)
         if top in allowed or (top_p >= CONFIDENT_DETECTION and not strict):
-            return None, best
-        return best, best
+            return None, best, probs
+        return best, best, probs
 
     def transcribe(self, wav: bytes, allowed: list[str], vocabulary: list[str], beam_size: int = 5,
                    dialect: str = "auto", strict: bool = False, detect: bool = True,
@@ -186,24 +194,34 @@ class Transcriber:
         # OpenVINO has no separate language check (detection happens inside the decode, then the retries below
         # catch a language the user doesn't speak), and the Arabic example sentence makes it write English speech
         # as Arabic (measured), so it gets the vocabulary only.
-        forced, best = self.choose_language(audio, allowed, strict) if detect and not self.openvino else (None, None)
+        forced, best, probs = self.choose_language(audio, allowed, strict) if detect and not self.openvino else (None, None, {})
         arabic_in_play = (not allowed or "ar" in allowed) and not self.openvino
         prompt = (MIXED_EXAMPLES.get(dialect, MIXED_EXAMPLE) + " " if arabic_in_play else "") + ", ".join(vocabulary) + "."
         context = context.strip()[-200:]
         if self.device == "cpu":
             beam_size = 1  # several times faster on a processor, for a small accuracy cost
 
+        fit = 0.0  # the last decode's mean log-probability: how well the text fits the audio
+
         def run(language: str | None) -> tuple[str, str | None]:
+            nonlocal fit
             segments, info = self.model.transcribe(
                 audio, language=language, multilingual=language is None, vad_filter=True, beam_size=beam_size,
                 initial_prompt=prompt + (" " + context if context else ""),
                 condition_on_previous_text=False)  # no repetition loops on long dictations
+            segments = list(segments)
+            fit = sum(s.avg_logprob for s in segments) / len(segments) if segments else -9.0
             text = " ".join(s.text.strip() for s in segments
                             # a segment copied out of the context (whole or part) was never said in this phrase
                             if not is_hallucination(s.text, prompt + " " + context) and fold(s.text) != fold(context)).strip()
             return text, language or info.language
 
         text, language = run(forced)
+        # Arabic came out (all of it, or a tail: "…before lunch? نيبرة") from audio that may well be English.
+        if text and is_arabic(text) and "en" in allowed and probs.get("en", 0) >= MAYBE_ENGLISH:
+            arabic_fit, (en_text, _) = fit, run("en")
+            if en_text and fit > arabic_fit:  # it was English, translated: keep what was said
+                text, language = en_text, "en"
         latin = bool(text) and foreign_latin(text, allowed)
         drifted = strict and bool(text) and bool(allowed) and language not in allowed  # e.g. Whisper itself said "fr"
         if text and (foreign_script(text, allowed) or latin or drifted):

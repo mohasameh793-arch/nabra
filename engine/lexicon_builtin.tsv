@@ -1,5 +1,6 @@
 # term<TAB>Arabic-script spellings Whisper produces (comma-separated, optional)
 # Short terms (phonetic key < 4 consonants) are ONLY matched through these spellings.
+Nabra
 API	ايه بي اي, اي بي اي, ابي اي, الابي اي, الأبيأي
 SDK
 JSON	جيسون, جايسون, جسون
