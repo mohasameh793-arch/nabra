@@ -5,6 +5,7 @@ import { go } from "../hub.js";
 import { openWordEditor } from "./dictionary.js";
 
 let query = "";
+const original = new Set(); // dictations showing what was heard before the cleanup
 let searching = false;
 let tipClosed = localStorage.getItem("tip-notes-closed") === "1";
 
@@ -75,10 +76,16 @@ function row(d) {
     state.history = state.history.filter((x) => x.id !== d.id);
     render();
   });
+  // Undo AI edit: see (and copy) exactly what was heard before the dictionary and the AI cleaned it up.
+  const raw = original.has(d.id) && d.raw;
+  const undo = d.raw ? iconBtn("undo", raw ? "Show the cleaned-up text" : "Show what you said, before the AI edit", () => {
+    original.has(d.id) ? original.delete(d.id) : original.add(d.id);
+    render();
+  }, { class: `icon-btn${raw ? " on" : ""}` }) : null;
   return h("div", { class: `row-item${d.flagged ? " flagged" : ""}` },
     h("div", {}, h("time", {}, timeOf(d.id)), d.app ? h("div", { class: "app" }, appName(d.app)) : null),
-    h("div", { class: "text", dir: "auto" }, d.text),
-    h("div", { class: "actions" }, iconBtn("copy", "Copy", () => copyText(d.text)),
+    h("div", { class: "text", dir: "auto" }, raw ? h("span", { class: "muted" }, "Before the AI edit: ") : null, raw || d.text),
+    h("div", { class: "actions" }, undo, iconBtn("copy", "Copy", () => copyText(raw || d.text)),
       iconBtn("edit", "A word came out wrong? Add it to the dictionary", () => openWordEditor()), flag, remove));
 }
 

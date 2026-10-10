@@ -285,6 +285,7 @@ impl Controller {
             seconds,
             fixes: result.fixes,
             flagged: false,
+            raw: if result.raw.trim() != result.text.trim() { result.raw.clone() } else { String::new() },
         };
         let state = self.state();
         *state.last_text.lock().unwrap() = result.text.clone();

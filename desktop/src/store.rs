@@ -322,6 +322,9 @@ pub struct Dictation {
     pub seconds: f32,
     pub fixes: Fixes,
     pub flagged: bool,
+    /// What was heard before the cleanup, when the cleanup changed it (Wispr's "Undo AI edit": see and copy it).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub raw: String,
 }
 
 // --- notes ----------------------------------------------------------------------------------

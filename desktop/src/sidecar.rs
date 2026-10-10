@@ -307,6 +307,9 @@ pub struct Dictated {
     pub dialect: Option<String>,
     #[serde(default)]
     pub fixes: crate::store::Fixes,
+    /// What was heard, before the dictionary and the AI cleaned it up.
+    #[serde(default)]
+    pub raw: String,
 }
 
 /// `langs`, `mode` and `style` come from validated settings (ASCII words, commas, underscores only).

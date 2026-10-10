@@ -17,6 +17,7 @@ export function h(tag, attrs = {}, ...children) {
 }
 
 export const ICONS = {
+  undo: '<svg viewBox="0 0 24 24"><path d="M9 7 4 12l5 5"/><path d="M4 12h10a6 6 0 0 1 0 12h-2"/></svg>',
   copy: '<svg viewBox="0 0 24 24"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M5 15V6.5A1.5 1.5 0 0 1 6.5 5H15"/></svg>',
   flag: '<svg viewBox="0 0 24 24"><path d="M6 21V4.5M6 4.5h10l-2 4 2 4H6"/></svg>',
   more: '<svg viewBox="0 0 24 24"><circle cx="12" cy="6" r="1.2" class="fill"/><circle cx="12" cy="12" r="1.2" class="fill"/><circle cx="12" cy="18" r="1.2" class="fill"/></svg>',
