@@ -82,6 +82,7 @@ fully offline.
 | Do this | What happens |
 |---|---|
 | **Hold `Right Ctrl`**, talk, release | Your words are typed where your cursor is (no Right Ctrl or a Copilot key? pick another key in Settings → General) |
+| **Tap `Right Ctrl` twice**, talk, tap it once more | Hands-free: talk as long as you like (up to 20 minutes) without holding the key |
 | Hover the **pill** on the right edge of the screen → click the **mic** | Hands-free dictation: talk as long as you like, click **■** to insert |
 | **Hold `Right Alt`** and say a command | Edit text with your voice (see below) |
 | **`Ctrl` + `Alt` + `N`**, or the pill's **record** button | Start / stop meeting notes |

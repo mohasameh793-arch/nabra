@@ -55,7 +55,7 @@ function render(v) {
     case "listening":
       meter(v.level);
       $("wave").dataset.handsFree = v.hands_free ? "1" : "";
-      $("wave").title = v.command ? "Say a command, then release" : v.hands_free ? "Click to insert" : "Release to insert";
+      $("wave").title = v.command ? "Say a command, then release" : v.hands_free ? "Tap Right Ctrl or click to insert" : "Release to insert";
       break;
     case "busy":
       recent.fill(0);

@@ -2,6 +2,7 @@
 //! types or edits text, records history, and decides what the pill shows.
 //!
 //!   Right Ctrl (hold) / pill mic (toggle)  → dictate: text is typed where the cursor is
+//!   Right Ctrl tapped twice                → hands-free dictation; one more tap types it
 //!   Right Alt (hold)                       → command: "scratch that", "new line", a transform
 //!                                            ("make it shorter") applied to the selection or the
 //!                                            last dictation, or a question about past calls
@@ -53,6 +54,11 @@ const UPDATING_FOR: Duration = Duration::from_secs(600);
 const REVEAL_FOR: Duration = Duration::from_secs(60);
 /// A forgotten hands-free dictation stops itself (and is transcribed) after this long.
 const MAX_TAKE: Duration = Duration::from_secs(5 * 60);
+/// Hands-free (double-tap, pill mic) dictation runs this long before it stops itself and types what was said.
+const MAX_HANDS_FREE: Duration = Duration::from_secs(20 * 60);
+/// A press of the talk key this short is a tap, not a dictation; two taps this close together start hands-free.
+const TAP: Duration = Duration::from_millis(300);
+const DOUBLE_TAP: Duration = Duration::from_millis(500);
 const MAX_LISTEN: Duration = Duration::from_secs(10 * 60);
 /// "scratch that" / "make it shorter" only reach back this far: after that the user has likely typed or moved
 /// the cursor, and Backspace / Shift+Left would hit their own text.
@@ -93,6 +99,8 @@ pub struct Controller {
     slow_takes: u8,
     /// The Arabic dialect of the last dictation that had one (the pill's badge), e.g. "Gulf".
     heard: &'static str,
+    /// When the talk key was last tapped (pressed and let go quickly): a second tap soon after starts hands-free.
+    tapped: Option<Instant>,
 }
 
 fn dialect_label(code: &str) -> &'static str {
@@ -116,7 +124,7 @@ impl Controller {
     pub fn new(app: AppHandle) -> Self {
         Self {
             app, take: None, last: None, hovering: false, ready: false, shown: None, hold_until: None, engine_error: None,
-            deferred: Vec::new(), slow_takes: 0, heard: "",
+            deferred: Vec::new(), slow_takes: 0, heard: "", tapped: None,
         }
     }
 
@@ -546,9 +554,22 @@ impl Controller {
                 },
                 Ok(Control::Key(Shortcut::CatchUp)) if self.take.is_none() => self.catch_up(),
                 Ok(Control::Reveal { title, text, note, t }) => self.flash(View::Reveal { title, text, note, t }, REVEAL_FOR),
-                Ok(Control::Key(Shortcut::TalkPressed)) if self.take.is_none() => self.begin(false, false),
-                Ok(Control::Key(Shortcut::TalkReleased)) if self.take.as_ref().is_some_and(|t| !t.hands_free && !t.command) => {
+                // Double-tap Right Ctrl: hands-free. A tap while hands-free types what was said.
+                Ok(Control::Key(Shortcut::TalkPressed)) if self.take.is_none() => {
+                    let double = self.tapped.take().is_some_and(|t| t.elapsed() < DOUBLE_TAP);
+                    self.begin(double, false)
+                }
+                Ok(Control::Key(Shortcut::TalkPressed)) if self.take.as_ref().is_some_and(|t| t.hands_free && !t.listen && !t.command) => {
                     self.finish()
+                }
+                Ok(Control::Key(Shortcut::TalkReleased)) if self.take.as_ref().is_some_and(|t| !t.hands_free && !t.command) => {
+                    if self.take.as_ref().is_some_and(|t| t.started.elapsed() < TAP) {
+                        self.take = None; // a tap, not a dictation: maybe the first of a double-tap
+                        self.tapped = Some(Instant::now());
+                        self.rest();
+                    } else {
+                        self.finish()
+                    }
                 }
                 Ok(Control::Key(Shortcut::CommandPressed)) if self.take.is_none() => self.begin(false, true),
                 Ok(Control::Key(Shortcut::CommandReleased)) if self.take.as_ref().is_some_and(|t| t.command) => self.finish(),
@@ -602,7 +623,7 @@ impl Controller {
                 }
                 Ok(_) => {}
                 Err(RecvTimeoutError::Timeout) => match &self.take {
-                    Some(t) if t.started.elapsed() > if t.listen { MAX_LISTEN } else { MAX_TAKE } => self.finish(),
+                    Some(t) if t.started.elapsed() > if t.listen { MAX_LISTEN } else if t.hands_free { MAX_HANDS_FREE } else { MAX_TAKE } => self.finish(),
                     Some(t) if !t.hands_free && t.started.elapsed() > Duration::from_secs(1) && hold_key_up(t.command) => {
                         self.finish()
                     }
