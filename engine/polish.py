@@ -79,6 +79,15 @@ DIALECT_NAMES = {"gulf": "Gulf Arabic", "egyptian": "Egyptian Arabic", "levantin
 PART_CHARS = 6000  # transcript characters per summary request (fits an 8k context with room to answer)
 
 
+def strip_reasoning(text: str) -> str:
+    """The model's thinking never reaches the user. Qwen3's template opens <think> in the prompt, so a reply can carry
+    reasoning that ends in a bare </think>: keep only what follows the last one. Reasoning cut off before </think>
+    is dropped whole."""
+    if "</think>" in text:
+        text = text.rsplit("</think>", 1)[1]
+    return re.sub(r"<think>.*", "", text, flags=re.S).strip()
+
+
 class Llm:
     def __init__(self, base_url: str):
         self.base_url = base_url.rstrip("/")
@@ -102,8 +111,7 @@ class Llm:
         choice = r.json()["choices"][0]
         if whole and choice.get("finish_reason") == "length":
             raise ValueError("LLM reply was cut off")
-        text = re.sub(r"<think>.*?</think>", "", choice["message"]["content"], flags=re.S)
-        return re.sub(r"<think>.*", "", text, flags=re.S).strip()  # reasoning cut off before </think>: drop it
+        return strip_reasoning(choice["message"]["content"])
 
     def cleanup(self, text: str, vocabulary: list[str], dialect: str = "auto") -> str:
         system = f"{CLEANUP_RULES}\nPreferred spellings: {', '.join(vocabulary)}"

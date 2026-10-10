@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from lexicon import Lexicon, phonetic_key  # noqa: E402
-from polish import as_list, check_edit, from_pieces, main_language  # noqa: E402
+from polish import as_list, check_edit, from_pieces, main_language, strip_reasoning  # noqa: E402
 from textnorm import dialect_of, fold, levenshtein  # noqa: E402
 
 # dialect badge (marker words)
@@ -19,6 +19,11 @@ assert dialect_of("أنا عايز أعمل deploy دلوقتي") == "egyptian"
 assert dialect_of("بدي خلص الشغل هلق") == "levantine"
 assert dialect_of("نرجو منكم الحضور في الموعد المحدد") is None  # MSA is chosen, never guessed
 assert dialect_of("hello there") is None
+
+# the model's thinking never reaches the user (a translate command once typed its reasoning, ending in a bare
+# </think>, into a chat)
+assert strip_reasoning("Okay, let me tackle this translation.\n</think>\n\nOkay, I want you to see.") == "Okay, I want you to see."
+assert strip_reasoning("<think>a</think>b") == "b" and strip_reasoning("<think>cut off") == "" and strip_reasoning("x") == "x"
 
 # textnorm
 assert fold("إِنَّ الْمَدْرَسَةَ") == fold("ان المدرسه")
