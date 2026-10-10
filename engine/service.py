@@ -73,6 +73,10 @@ class Engine:
                 except (httpx.HTTPError, KeyError, TypeError, ValueError) as err:  # incl. a cut-off or malformed reply
                     log.warning("LLM cleanup failed (%s); using lexicon output", type(err).__name__)
                 try:
+                    text = self.llm.backtrack(text)
+                except (httpx.HTTPError, KeyError, TypeError, ValueError) as err:
+                    log.warning("LLM backtrack pass failed (%s)", type(err).__name__)
+                try:
                     text = self.llm.lists(text)
                 except (httpx.HTTPError, KeyError, TypeError, ValueError) as err:  # JSONDecodeError is a ValueError
                     log.warning("LLM list pass failed (%s)", type(err).__name__)

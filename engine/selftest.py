@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from lexicon import Lexicon, phonetic_key  # noqa: E402
-from polish import as_list, check_edit, from_pieces, main_language, strip_reasoning  # noqa: E402
+from polish import BACKTRACK_TRIGGERS, as_list, backtrack_ok, check_edit, from_pieces, main_language, strip_reasoning  # noqa: E402
 from textnorm import dialect_of, fold, levenshtein  # noqa: E402
 
 # dialect badge (marker words)
@@ -24,6 +24,19 @@ assert dialect_of("hello there") is None
 # </think>, into a chat)
 assert strip_reasoning("Okay, let me tackle this translation.\n</think>\n\nOkay, I want you to see.") == "Okay, I want you to see."
 assert strip_reasoning("<think>a</think>b") == "b" and strip_reasoning("<think>cut off") == "" and strip_reasoning("x") == "x"
+
+# Backtrack: runs only on a correction phrase, and may only delete words
+assert BACKTRACK_TRIGGERS.search("let's meet at 2, actually 3") and BACKTRACK_TRIGGERS.search("بكرة، لا استنى، النهاردة")
+assert BACKTRACK_TRIGGERS.search("الساعة 4 قصدي 5") and not BACKTRACK_TRIGGERS.search("send the report tonight")
+assert backtrack_ok("Let's meet at 2, actually 3.", "Let's meet at 3.")
+assert backtrack_ok("هبعتلك الملف بكرة، لا استنى، النهاردة بالليل.", "هبعتلك الملف النهاردة بالليل.")
+assert not backtrack_ok("Let's meet at 2, actually 3.", "Let's meet on Friday at 3.")  # added a word
+assert not backtrack_ok("Let's meet at 2, actually 3.", "Let's meet at 2, actually 3.")  # nothing removed
+assert not backtrack_ok("بكرة، لا استنى، النهاردة", "Tomorrow, no, today")  # translated
+assert not backtrack_ok("I actually think we should ship it now.", "I think we should ship it now.")  # not a correction
+assert not backtrack_ok("أقصد إن الفكرة حلوة بس محتاجة وقت.", "الفكرة حلوة بس محتاجة وقت.")  # not a correction
+assert not backtrack_ok("عايز اتنين قهوة لا لا تلاتة قهوة لو سمحت.", "عايز اتنين قهوة لو سمحت.")  # kept the wrong half
+assert backtrack_ok("عايز اتنين قهوة لا لا تلاتة قهوة لو سمحت.", "عايز تلاتة قهوة لو سمحت.")
 
 # textnorm
 assert fold("إِنَّ الْمَدْرَسَةَ") == fold("ان المدرسه")

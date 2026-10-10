@@ -35,6 +35,49 @@ LIST_EXAMPLES = [
 ]
 SENTENCE_END = re.compile(r"(?<=[.?!؟])\s+")
 
+# Backtrack (Wispr Flow's name): the speaker changes their mind mid-sentence and only the final version is kept. The AI
+# runs only when one of these is said, and may only delete words (backtrack_ok).
+_BACKTRACK_EN = ["actually", "no wait", "wait no", "i mean", "scratch that", "sorry i mean", "no no", "make that"]
+_BACKTRACK_AR = ["لا استنى", "لأ استنى", "لا لا", "قصدي", "أقصد", "اقصد", "لا ثانية", "لا ثواني", "لا مش كده", "بمعنى أصح",
+                 "عفوًا", "عفوا"]
+
+
+def _phrases(words: list[str]) -> re.Pattern:
+    return re.compile(r"(?<!\w)(" + "|".join(re.escape(w).replace(r"\ ", r",?\s+") for w in words) + r")(?!\w)", re.I)
+
+
+BACKTRACK_TRIGGERS = _phrases(_BACKTRACK_EN + _BACKTRACK_AR)
+_BACKTRACK_FOLDED = _phrases([fold(w) for w in _BACKTRACK_EN + _BACKTRACK_AR])  # as backtrack_ok compares words
+BACKTRACK_RULES = """The user dictated text and corrected themselves while speaking. Remove the words they took back and
+the correction phrase itself ("actually", "no wait", "I mean", «لا استنى», «قصدي»), keeping only what they finally
+meant. Delete words only: never add, translate, reorder or reword anything; keep every other word exactly as written.
+If it is not a self-correction ("I actually like it", «أقصد إن الفكرة حلوة»), return the text unchanged.
+Reply with the text only."""
+BACKTRACK_EXAMPLES = [
+    ("Let's do coffee at 2, actually 3.", "Let's do coffee at 3."),
+    ("Send the file to Omar, no wait, to Lina.", "Send the file to Lina."),
+    ("هبعتلك الملف بكرة، لا استنى، النهاردة بالليل.", "هبعتلك الملف النهاردة بالليل."),
+    ("الاجتماع الساعة 4 قصدي الساعة 5 في المكتب.", "الاجتماع الساعة 5 في المكتب."),
+    ("I actually think the new design is better.", "I actually think the new design is better."),
+]
+
+
+def backtrack_ok(before: str, after: str) -> bool:
+    """A self-correction deletes one run of words that ends with the correction phrase and has something before it
+    ("2, actually" from "at 2, actually 3"). Anything else (dropping "actually" from "I actually think", keeping the
+    wrong half, adding or rewording a word) is not trusted, and the user's text is kept as said."""
+    b, a = fold(before).split(), fold(after).split()
+    cut = len(b) - len(a)
+    if cut <= 0:
+        return False
+    for i in range(len(a) + 1):  # the deleted run b[i:i + cut]; words can repeat around it ("for four, no wait, for six")
+        if b[:i] != a[:i] or b[i + cut:] != a[i:]:
+            continue
+        deleted = " ".join(b[i:i + cut])
+        if any(m.end() == len(deleted) and m.start() > 0 for m in _BACKTRACK_FOLDED.finditer(deleted)):
+            return True
+    return False
+
 # Items inside one sentence ("I need to finish the report, send the invoice, and call the doctor"): the LLM cuts the
 # text into pieces, and the pieces are only used if they hold exactly the user's words, in order.
 PIECES_RULES = """Split dictated text into a bullet list ONLY if the speaker enumerates 3 or more parallel items (tasks,
@@ -147,6 +190,16 @@ class Llm:
         found = re.search(r"\{.*\}", reply, re.S)
         cut = json.loads(found[0]) if found else {}
         return from_pieces(text, cut) if isinstance(cut, dict) else text
+
+    def backtrack(self, text: str) -> str:
+        """Only the final version of a self-correction ("at 2, actually 3" -> "at 3"); the text unchanged otherwise."""
+        if not BACKTRACK_TRIGGERS.search(text):
+            return text
+        messages = [{"role": "system", "content": BACKTRACK_RULES}]
+        for before, after in BACKTRACK_EXAMPLES:
+            messages += [{"role": "user", "content": before}, {"role": "assistant", "content": after}]
+        reply = self.chat(messages + [{"role": "user", "content": text}], max_tokens=400, whole=True)
+        return reply if backtrack_ok(text, reply) else text
 
     def summarize(self, lines: list[dict], language: str | None) -> str:
         spoken = [l for l in lines if l.get("text", "").strip()]
