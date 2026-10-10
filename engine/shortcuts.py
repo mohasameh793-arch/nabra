@@ -15,8 +15,42 @@ _BREAKS = [
 _BREAK_RES = [(re.compile(rf"\s*[,،]?\s*(?<!\w)(?:{words})(?!\w)[,.،]?\s*", re.IGNORECASE), out) for words, out in _BREAKS]
 
 
-def spoken_breaks(text: str) -> tuple[str, int]:
+# ---- punctuation said by name ("comma", «علامة استفهام») -------------------------------------
+# (spoken words, mark after English, mark after Arabic). "period", "full stop" and «نقطة» only as the last word:
+# "a trial period" and «النقطة دي» are words, not punctuation.
+_MARKS = [
+    (r"comma|فاصلة|فاصله", ",", "،"),
+    (r"question mark|علامة استفهام|علامه استفهام|علامة الاستفهام", "?", "؟"),
+    (r"exclamation (?:mark|point)|علامة تعجب|علامه تعجب", "!", "!"),
+    (r"semicolon|فاصلة منقوطة", ";", "؛"),
+]
+_MARK_RES = [(re.compile(rf"\s*[,.،]?\s*(?<!\w)(?:{words})(?!\w)[,.،]?", re.IGNORECASE), en, ar) for words, en, ar in _MARKS]
+_FINAL_STOP = re.compile(r"\s*[,.،]?\s*(?<!\w)(?:period|full stop|نقطة|نقطه)[.!]?\s*$", re.IGNORECASE)
+
+
+def spoken_marks(text: str) -> tuple[str, int]:
+    """Punctuation said by name becomes the mark (Arabic ، ؟ after Arabic words)."""
     hits = 0
+
+    def mark(en: str, ar: str):
+        def put(m: re.Match) -> str:
+            before = text_now[: m.start()].rstrip()
+            return ar if before and "\u0600" <= before[-1] <= "\u06ff" else en
+        return put
+
+    for pattern, en, ar in _MARK_RES:
+        text_now = text
+        text, n = pattern.subn(mark(en, ar), text)
+        hits += n
+    text, n = _FINAL_STOP.subn(".", text)
+    hits += n
+    # A sentence that now ends with a spoken mark: the next English word starts with a capital.
+    text = re.sub(r"([.?!])\s+([a-z])", lambda m: m.group(1) + " " + m.group(2).upper(), text)
+    return text, hits
+
+
+def spoken_breaks(text: str) -> tuple[str, int]:
+    text, hits = spoken_marks(text)
     for pattern, out in _BREAK_RES:
         text, n = pattern.subn(out, text)
         hits += n

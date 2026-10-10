@@ -38,6 +38,14 @@ assert not backtrack_ok("أقصد إن الفكرة حلوة بس محتاجة �
 assert not backtrack_ok("عايز اتنين قهوة لا لا تلاتة قهوة لو سمحت.", "عايز اتنين قهوة لو سمحت.")  # kept the wrong half
 assert backtrack_ok("عايز اتنين قهوة لا لا تلاتة قهوة لو سمحت.", "عايز تلاتة قهوة لو سمحت.")
 
+# punctuation said by name
+from shortcuts import spoken_breaks  # noqa: E402
+assert spoken_breaks("Hi Sara comma can we meet tomorrow question mark")[0] == "Hi Sara, can we meet tomorrow?"
+assert spoken_breaks("تمام فاصلة هبعتهولك بكرة علامة استفهام")[0] == "تمام، هبعتهولك بكرة؟"
+assert spoken_breaks("The trial period ends Friday period")[0] == "The trial period ends Friday."
+assert spoken_breaks("النقطة دي مهمة")[0] == "النقطة دي مهمة"  # a word, not punctuation
+assert spoken_breaks("Great exclamation mark see you then")[0] == "Great! See you then"
+
 # textnorm
 assert fold("إِنَّ الْمَدْرَسَةَ") == fold("ان المدرسه")
 assert fold("Hello, Next.js!") == "hello next.js"
