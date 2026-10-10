@@ -1,5 +1,6 @@
 //! Audio input. Two sources: a microphone (by name, or the Windows default) and the system output via
-//! WASAPI loopback ("what the other side of a call says"). A `Tap` exists only while recording.
+//! WASAPI loopback ("what the other side of a call says"), one tap per speaker or headset. A `Tap` exists only
+//! while recording.
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -35,6 +36,22 @@ fn default_device(source: Source) -> Option<String> {
     .ok()
 }
 
+/// Outputs a call can play on. Every one is listened to: Zoom or Teams often play to a headset that isn't Windows'
+/// default (a test call on the headphones was missed entirely while the monitor was the default). Not the "virtual
+/// microphone" feeds (Voicemod, VB-Cable's input): what plays there is the user's own voice going out.
+// ponytail: a name list of virtual-mic feeds; extend it if another one shows up as "them".
+pub fn speakers() -> Vec<String> {
+    const MIC_FEEDS: [&str; 3] = ["voicemod", "cable input", "vb-audio"];
+    cpal::default_host()
+        .output_devices()
+        .map(|it| {
+            it.filter_map(|d| d.name().ok())
+                .filter(|n| !MIC_FEEDS.iter().any(|f| n.to_lowercase().contains(f)))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 pub fn microphones() -> Vec<String> {
     cpal::default_host()
         .input_devices()
@@ -43,12 +60,12 @@ pub fn microphones() -> Vec<String> {
 }
 
 impl Tap {
-    /// `mic`: device name from Settings; None or not found → Windows default microphone.
-    pub fn open(source: Source, mic: Option<&str>) -> Result<Tap, String> {
+    /// `name`: the microphone from Settings, or the speaker to listen to; None or not found → Windows' default.
+    pub fn open(source: Source, name: Option<&str>) -> Result<Tap, String> {
         let host = cpal::default_host();
         let (device, config, follows_default) = match source {
             Source::Mic => {
-                let named = mic.and_then(|want| {
+                let named = name.and_then(|want| {
                     host.input_devices().ok()?.find(|d| d.name().map(|n| n == want).unwrap_or(false))
                 });
                 let follows_default = named.is_none();
@@ -61,10 +78,16 @@ impl Tap {
                 (device, config, follows_default)
             }
             Source::System => {
-                let device = host.default_output_device().ok_or("No speakers or headphones to capture the call from.")?;
+                let named = name.and_then(|want| {
+                    host.output_devices().ok()?.find(|d| d.name().map(|n| n == want).unwrap_or(false))
+                });
+                let follows_default = named.is_none();
+                let device = named
+                    .or_else(|| host.default_output_device())
+                    .ok_or("No speakers or headphones to capture the call from.")?;
                 // cpal turns an input stream on an output device into WASAPI loopback capture.
                 let config = device.default_output_config().map_err(|e| format!("Can't capture computer audio ({e})"))?;
-                (device, config, true)
+                (device, config, follows_default)
             }
         };
         let samples: Arc<Mutex<Vec<f32>>> = Arc::default();
@@ -86,6 +109,10 @@ impl Tap {
     /// reopen it, or that side of the call goes silent.
     pub fn stale(&self) -> bool {
         self.failed.load(Ordering::Relaxed) || self.follows_default && default_device(self.source).as_deref() != Some(&self.device)
+    }
+
+    pub fn device(&self) -> &str {
+        &self.device
     }
 
     /// RMS of the latest audio packet, for the level meter.

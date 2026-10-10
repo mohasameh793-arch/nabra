@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::sidecar;
-use crate::sound::{wav, Source, Tap};
+use crate::sound::{self, wav, Source, Tap};
 use crate::store::{now_ms, KnownVoice, Line, Note, Speaker};
 use crate::App;
 
@@ -27,6 +27,16 @@ const MAX_PHRASE_S: f32 = 12.0; // long monologues still finalize regularly (and
 /// can talk, so faster than this queued finished lines behind live ones (the call notes lagged).
 const PARTIAL_EVERY: Duration = Duration::from_millis(1200);
 const MIN_PARTIAL_S: f32 = 0.8;
+/// Someone cut in: the line being spoken on the other side ends there (marked "—") if it's at least this long, so the
+/// transcript reads in the order things were said. Shorter, and it was just both starting at once.
+const CUT_IN_S: f32 = 2.0;
+/// The interrupted side must have been talking for this many pump ticks (200 ms each) before the other side started.
+/// Speaker bleed into the mic starts together with the call audio, never in the middle of it, so it doesn't cut.
+const TALKING_TICKS: u32 = 2;
+// ponytail: one fixed ratio. The microphone counts as someone cutting in only when it's at least this loud next to the
+// call audio: the call leaking from the speakers into the mic is much quieter (it cut Ahmed's line twice in a test).
+// Per-call calibration of the speaker-to-mic leak if it misfires.
+const CUT_IN_LOUDNESS: f32 = 0.5;
 // ponytail: an echo starts within a phrase cut (~2 s) of the line it echoes; a wider window deleted the user
 // repeating something back. Compare phrase spans if real echoes still slip through.
 const ECHO_WINDOW_S: f32 = 2.5;
@@ -42,6 +52,8 @@ const KNOWN_VOICE: f32 = 0.75;
 const REMEMBER_VOTES: u32 = 3;
 /// A phrase too short for a voiceprint goes to whoever spoke last on that side, if they spoke this recently.
 const SAME_TURN_S: f32 = 8.0;
+/// Phrases shorter than this keep the last speaker instead of being matched by voice.
+const VOICEPRINT_MIN_S: f32 = 2.5;
 /// Your voice is learned from this many clean mic phrases (each costs one voiceprint on the CPU).
 const ME_PHRASES: u32 = 5;
 const ME_MIN_S: f32 = 2.0;
@@ -221,6 +233,16 @@ impl Phrases {
         }
     }
 
+    /// Loudness of the last 200 ms (one pump tick).
+    pub fn recent(&self) -> f32 {
+        let tail = (self.rate / 5) as usize;
+        if self.buf.len() < tail { 0.0 } else { Self::rms(&self.buf[self.buf.len() - tail..]) }
+    }
+
+    pub fn speaking(&self) -> bool {
+        self.recent() > SPEECH_RMS
+    }
+
     /// The phrase still being spoken, for live text: (samples so far, start time) once there's speech.
     pub fn peek(&self) -> Option<(Vec<f32>, f32)> {
         (self.secs(self.voiced) >= 0.3 && self.secs(self.buf.len()) >= MIN_PARTIAL_S).then(|| (self.buf.clone(), self.start))
@@ -255,7 +277,11 @@ pub fn is_echo(a: &str, b: &str) -> bool {
     let (a, b) = (words(a), words(b));
     let union = a.union(&b).count();
     // Short replies ("Okay", "Thank you") are said by both sides all the time: never call those an echo.
-    union >= 4 && a.intersection(&b).count() as f32 / union as f32 >= 0.6
+    let shared = a.intersection(&b).count();
+    let shorter = a.len().min(b.len());
+    // Or the mic caught only part of the other line ("Can I say something?" inside "Hey, hey, can I say something?
+    // معلش ثانية واحدة"): the shorter one is a copy when nearly all of it is in the other.
+    union >= 4 && shared as f32 / union as f32 >= 0.6 || shorter >= 4 && shared as f32 / shorter as f32 >= 0.85
 }
 
 pub struct Meeting {
@@ -560,6 +586,7 @@ pub struct Job {
     rate: u32,
     t: f32,
     partial: bool,
+    cut: bool, // ended because the other side cut in
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -589,6 +616,10 @@ fn handle(
         text = sidecar::note_chunk(&audio, langs, false, &context);
     }
     let text = match text {
+        // Cut off mid-sentence: it breaks off (Whisper ends it with a period anyway); a question or exclamation stays.
+        Ok(text) if job.cut && !text.is_empty() && !text.ends_with(['!', '?', '؟', '—']) => {
+            text.trim_end_matches(['.', '…', ',', '،']).to_string() + "—"
+        }
         Ok(text) => text,
         Err(e) => {
             if !job.partial {
@@ -606,8 +637,10 @@ fn handle(
         }
         return;
     }
-    // Who said it (other side only; the mic is always "you"). The voiceprint is computed on the CPU.
-    let voice = if who == "them" && !text.is_empty() {
+    // Who said it (other side only; the mic is always "you"). The voiceprint is computed on the CPU. A short phrase's
+    // voiceprint is unreliable (Ahmed's 2 s "وبعد كده… آه، اتفضل" became a second speaker): it goes to whoever on
+    // that side spoke last, like a phrase too short for any voiceprint.
+    let voice = if who == "them" && !text.is_empty() && job.samples.len() as f32 / job.rate as f32 >= VOICEPRINT_MIN_S {
         sidecar::voice(&audio).unwrap_or_default()
     } else {
         Vec::new()
@@ -713,16 +746,33 @@ fn record(
     ready: Sender<Result<(), String>>,
 ) -> Result<(), String> {
     // cpal streams aren't Send: they're opened, read and dropped on this thread only.
-    let mut taps = match (Tap::open(Source::System, None), Tap::open(Source::Mic, mic.as_deref())) {
-        (Ok(system), Ok(microphone)) => [system, microphone],
-        (Err(e), _) | (_, Err(e)) => {
+    // taps[0] is the microphone; every other tap is a speaker or headset the call may be playing on.
+    let microphone = match Tap::open(Source::Mic, mic.as_deref()) {
+        Ok(tap) => tap,
+        Err(e) => {
             let _ = ready.send(Err(e.clone()));
             return Err(e);
         }
     };
+    let mut taps = vec![microphone];
+    taps.extend(sound::speakers().iter().filter_map(|name| Tap::open(Source::System, Some(name)).ok()));
+    if taps.len() == 1 {
+        match Tap::open(Source::System, None) {
+            Ok(tap) => taps.push(tap),
+            Err(e) => {
+                let _ = ready.send(Err(e.clone()));
+                return Err(e);
+            }
+        }
+    }
     let _ = ready.send(Ok(()));
-    let mut sides = [Phrases::new(Source::System, taps[0].rate), Phrases::new(Source::Mic, taps[1].rate)];
-    let (clock, mut last_partial, mut tick, mut lost) = (Instant::now(), Instant::now(), 0u32, [false; 2]);
+    let mut sides: Vec<Phrases> = taps
+        .iter()
+        .enumerate()
+        .map(|(i, t)| Phrases::new(if i == 0 { Source::Mic } else { Source::System }, t.rate))
+        .collect();
+    let (clock, mut last_partial, mut tick, mut mic_lost) = (Instant::now(), Instant::now(), 0u32, false);
+    let mut talking: Vec<u32> = vec![0; taps.len()]; // pump ticks each side has been talking without a break
     let mut pump = |flush: bool| {
         let partial_due = live && !flush && last_partial.elapsed() >= PARTIAL_EVERY;
         if partial_due {
@@ -731,25 +781,42 @@ fn record(
         tick += 1;
         if !flush {
             // Live sound meters for the meeting window: is it hearing the call, and you?
-            let _ = app.emit("meeting-level", serde_json::json!({ "them": taps[0].level(), "you": taps[1].level() }));
+            let them = taps[1..].iter().map(Tap::level).fold(0.0f32, f32::max);
+            let _ = app.emit("meeting-level", serde_json::json!({ "them": them, "you": taps[0].level() }));
         }
+        // A headset plugged in mid-call: listen to it too (checked every 5 s).
+        if !flush && tick % 25 == 0 {
+            for name in sound::speakers() {
+                if !taps[1..].iter().any(|t| t.device() == name) {
+                    if let Ok(tap) = Tap::open(Source::System, Some(&name)) {
+                        sides.push(Phrases { start: clock.elapsed().as_secs_f32(), ..Phrases::new(Source::System, tap.rate) });
+                        taps.push(tap);
+                    }
+                }
+            }
+        }
+        let mut gone = Vec::new();
         for (i, (tap, side)) in taps.iter_mut().zip(sides.iter_mut()).enumerate() {
-            // Headphones plugged in, Bluetooth dropped, default device switched: follow it (checked once a second).
+            // Unplugged, Bluetooth dropped, the default microphone switched: reopen it (checked once a second).
             if !flush && tick % 5 == 0 && tap.stale() {
-                match Tap::open(side.source, if side.source == Source::Mic { mic.as_deref() } else { None }) {
+                let name = if side.source == Source::Mic { mic.clone() } else { Some(tap.device().to_string()) };
+                match Tap::open(side.source, name.as_deref()) {
                     Ok(new) => {
                         side.feed(&tap.take());
                         if let Some((samples, t)) = side.next(true) {
-                            let _ = out.send(Job { source: side.source, samples, rate: tap.rate, t, partial: false });
+                            let _ = out.send(Job { source: side.source, samples, rate: tap.rate, t, partial: false, cut: false });
                         }
                         *side = Phrases { start: side.start, ..Phrases::new(side.source, new.rate) };
                         *tap = new;
-                        lost[i] = false;
+                        if side.source == Source::Mic {
+                            mic_lost = false;
+                        }
                     }
-                    Err(e) if !lost[i] => {
-                        lost[i] = true;
-                        let what = if side.source == Source::Mic { "your microphone" } else { "the call audio" };
-                        let _ = app.emit("notes-problem", format!("Lost {what}; still trying to reconnect. {e}"));
+                    // A speaker that's gone is dropped: the call is still heard on the others.
+                    Err(_) if side.source == Source::System => gone.push(i),
+                    Err(e) if !mic_lost => {
+                        mic_lost = true;
+                        let _ = app.emit("notes-problem", format!("Lost your microphone; still trying to reconnect. {e}"));
                     }
                     Err(_) => {}
                 }
@@ -760,12 +827,40 @@ fn record(
             }
             side.feed(&samples);
             let rate = tap.rate;
-            if let Some((samples, t)) = side.next(flush) {
-                let _ = out.send(Job { source: side.source, samples, rate, t, partial: false });
+            if let Some((samples, t)) = side.next(flush || gone.contains(&i)) {
+                let _ = out.send(Job { source: side.source, samples, rate, t, partial: false, cut: false });
             } else if partial_due {
                 if let Some((samples, t)) = side.peek() {
-                    let _ = out.send(Job { source: side.source, samples, rate, t, partial: true });
+                    let _ = out.send(Job { source: side.source, samples, rate, t, partial: true, cut: false });
                 }
+            }
+        }
+        // Someone started talking while the other side was mid-sentence: end that sentence here.
+        talking.resize(taps.len(), 0);
+        let call = sides.iter().filter(|s| s.source == Source::System).map(Phrases::recent).fold(0.0f32, f32::max);
+        let starts: Vec<Source> = (0..sides.len())
+            .filter(|&i| sides[i].speaking() && talking[i] == 0)
+            .filter(|&i| sides[i].source == Source::System || sides[i].recent() >= CUT_IN_LOUDNESS * call)
+            .map(|i| sides[i].source)
+            .collect();
+        for (j, side) in sides.iter_mut().enumerate() {
+            let interrupted = starts.iter().any(|&s| s != side.source)
+                && talking[j] >= TALKING_TICKS
+                && side.secs(side.buf.len()) >= CUT_IN_S;
+            if interrupted && !flush {
+                if let Some((samples, t)) = side.next(true) {
+                    let _ = out.send(Job { source: side.source, samples, rate: taps[j].rate, t, partial: false, cut: true });
+                }
+            }
+        }
+        for (i, side) in sides.iter().enumerate() {
+            talking[i] = if side.speaking() { talking[i] + 1 } else { 0 };
+        }
+        for i in gone.into_iter().rev() {
+            if taps.len() > 2 {
+                taps.remove(i);
+                sides.remove(i);
+                talking.remove(i);
             }
         }
     };
@@ -902,5 +997,7 @@ mod tests {
     fn echo_detection() {
         assert!(is_echo("OK, I'll send you the Stripe keys today.", "ok i'll send you the stripe keys today"));
         assert!(!is_echo("OK, I'll send you the keys.", "تمام، بضيف RTL للـ checkout"));
+        assert!(is_echo("Can I say something?", "Hey, hey, can I say something? معلش ثانية واحدة."), "part of the other line");
+        assert!(!is_echo("Yes, I agree.", "Yes, I agree with the plan for Monday."), "short replies stay");
     }
 }
