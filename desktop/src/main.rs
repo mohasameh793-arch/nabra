@@ -101,6 +101,13 @@ pub fn toggle_meeting(app: &AppHandle) -> Result<(), String> {
         std::thread::spawn(move || match m.finish(&app) {
             Ok(note) => {
                 let _ = app.emit("note-saved", &note.id);
+                // Like Wispr: the summary is written as soon as the call ends, not when you remember to click.
+                if note.lines.len() >= 3 {
+                    let _ = app.emit("note-summarizing", &note.id);
+                    if let Err(e) = meeting::summarize(&app, &note.id, None) {
+                        let _ = app.emit("notes-problem", format!("The summary couldn't be written: {e}. Click Summarize to try again."));
+                    }
+                }
             }
             Err(e) => {
                 let _ = app.emit("notes-problem", e);

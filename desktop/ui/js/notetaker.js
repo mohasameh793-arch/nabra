@@ -218,7 +218,12 @@ export function wire() {
   listen("note-saved", async (e) => {
     ui.cards = await call("notes");
     await select(e.payload, false);
-    notify("Note saved", "Open it and click Summarize when you're ready");
+    notify("Note saved", "");
+    if (!$("#page-notetaker").hidden) render();
+  });
+  listen("note-summarizing", (e) => {
+    // The summary is written automatically when a call ends (src/main.rs).
+    if (ui.selected?.id === e.payload) ui.summarizing = true;
     if (!$("#page-notetaker").hidden) render();
   });
   listen("note-updated", async (e) => {
