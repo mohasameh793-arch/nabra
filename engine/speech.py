@@ -98,8 +98,10 @@ def _cuda_dlls_on_path(cuda_dir: Path | None) -> None:
 
 
 class _Text:
+    """One OpenVINO result, shaped like a faster-whisper segment/info. OpenVINO gives no log-probability, so every
+    decode "fits" equally (avg_logprob 0): reading it unguarded crashed every NPU transcription (a 500) in 2.1.28."""
     def __init__(self, text: str = "", language: str | None = None):
-        self.text, self.language = text, language
+        self.text, self.language, self.avg_logprob = text, language, 0.0
 
 
 class OpenVinoWhisper:

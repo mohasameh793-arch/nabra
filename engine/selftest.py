@@ -46,6 +46,25 @@ assert spoken_breaks("The trial period ends Friday period")[0] == "The trial per
 assert spoken_breaks("النقطة دي مهمة")[0] == "النقطة دي مهمة"  # a word, not punctuation
 assert spoken_breaks("Great exclamation mark see you then")[0] == "Great! See you then"
 
+# the NPU (OpenVINO) adapter goes through the whole transcribe path: it once crashed every NPU dictation
+import io, wave  # noqa: E401,E402
+import numpy as np  # noqa: E402
+from speech import Transcriber, _Text  # noqa: E402
+
+
+class _FakeNpu:
+    def transcribe(self, audio, language=None, **_):
+        return [_Text("Thanks, Nabra.")], _Text(language=language or "en")
+
+
+npu = Transcriber.__new__(Transcriber)
+npu.openvino, npu.device, npu.model = True, "npu", _FakeNpu()
+_buf = io.BytesIO()
+with wave.open(_buf, "wb") as _w:
+    _w.setnchannels(1); _w.setsampwidth(2); _w.setframerate(16000)  # noqa: E702
+    _w.writeframes((np.sin(np.arange(16000) / 3) * 8000).astype(np.int16).tobytes())
+assert npu.transcribe(_buf.getvalue(), ["ar", "en"], [], strict=True)[0] == "Thanks, Nabra."
+
 # textnorm
 assert fold("إِنَّ الْمَدْرَسَةَ") == fold("ان المدرسه")
 assert fold("Hello, Next.js!") == "hello next.js"
