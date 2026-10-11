@@ -150,6 +150,7 @@ async function body() {
     }
     case "about": {
       const e = state.boot.engine;
+      const models = (await call("setup_status")).speech_models ?? {};
       return [h("h2", {}, "About Nabra"),
         field("Version", null, h("span", {}, state.boot.version)),
         field("Check for updates automatically", "Nabra checks every few hours and tells you when a new version is ready. Nothing installs until you click Update. Updates are signed, so only official releases install.", (() => {
@@ -170,6 +171,14 @@ async function body() {
           }
         } }, "Check for updates")),
         field("Speech engine", "Whisper, on this PC", h("span", {}, e ? `Running on ${({ cuda: "the NVIDIA GPU", npu: "the NPU", gpu: "Intel graphics" })[e.device] || "the processor"}` : "Starting…")),
+        // Pick the speech model yourself; only the ones downloaded on this PC can be chosen.
+        field("Speech model", "Automatic picks the best one for this PC. Switching restarts the speech engine (a few seconds).",
+          h("div", { class: "seg" }, [["auto", "Automatic"], ["npu", "NPU"], ["gpu", "NVIDIA GPU"], ["turbo", "Processor"], ["small", "Light"]]
+            .filter(([v]) => v === "auto" || models[v])
+            .map(([v, name]) => h("button", { "aria-pressed": String((s.speech_model || "auto") === v), onclick: async () => {
+              await save({ speech_model: v }, `Speech model: ${name}. Loading it…`);
+              draw();
+            } }, name)))),
         field("AI cleanup & overviews", "Qwen3 8B, local", h("span", {}, e?.llm ? "Ready" : "Off")),
         field("Models", "Speech and AI models downloaded during setup.",
           h("button", { class: "btn", onclick: () => { $("#settings-modal").close(); import("../hub.js").then((m) => m.go("setup")); } }, "Open setup")),

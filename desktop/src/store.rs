@@ -85,6 +85,8 @@ fn read_json<T: for<'de> Deserialize<'de> + Default>(path: &Path) -> T {
 // --- settings -------------------------------------------------------------------------------
 
 pub const DIALECTS: [&str; 5] = ["auto", "gulf", "egyptian", "levantine", "msa"];
+/// Speech model choice: "auto" (setup's pick for this PC), or a downloaded one (sidecar.rs).
+pub const SPEECH_MODELS: [&str; 5] = ["auto", "npu", "gpu", "turbo", "small"];
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
@@ -94,6 +96,8 @@ pub struct Settings {
     pub languages: Vec<String>,
     /// Arabic dialect lock: "auto" | "gulf" | "egyptian" | "levantine" | "msa" (steers recognition and cleanup).
     pub dialect: String,
+    /// Which speech model runs: one of SPEECH_MODELS.
+    pub speech_model: String,
     /// Call summary language; None = the call's main language.
     pub summary_language: Option<String>,
     /// "clean" (lexicon + AI cleanup) or "raw" (speech-to-text only).
@@ -153,6 +157,7 @@ impl Default for Settings {
             name: std::env::var("USERNAME").unwrap_or_default(),
             languages: vec!["ar".into(), "en".into()],
             dialect: "auto".into(),
+            speech_model: "auto".into(),
             summary_language: None,
             mode: "clean".into(),
             microphone: None,
@@ -183,6 +188,9 @@ impl Settings {
         }
         if !DIALECTS.contains(&self.dialect.as_str()) {
             return Err("Unknown dialect".into());
+        }
+        if !SPEECH_MODELS.contains(&self.speech_model.as_str()) {
+            return Err("Unknown speech model".into());
         }
         let s = &self.styles;
         if ![&s.personal, &s.work, &s.email, &s.other].iter().all(|v| ["formal", "casual", "very_casual"].contains(&v.as_str())) {
@@ -215,6 +223,9 @@ impl Settings {
         }
         if !DIALECTS.contains(&self.dialect.as_str()) {
             self.dialect = d.dialect; // settings saved before the dialect lock existed have ""
+        }
+        if !SPEECH_MODELS.contains(&self.speech_model.as_str()) {
+            self.speech_model = d.speech_model; // saved before the model picker existed: ""
         }
         self
     }
@@ -724,6 +735,10 @@ mod tests {
         assert_eq!(s.mode, "clean");
         assert!(Settings { languages: vec![], ..Settings::default() }.validate().is_err());
         assert!(Settings { languages: vec!["../x".into()], ..Settings::default() }.validate().is_err());
+        assert_eq!(s.speech_model, "auto");
+        assert!(Settings { speech_model: "gpu".into(), ..Settings::default() }.validate().is_ok());
+        assert!(Settings { speech_model: "huge".into(), ..Settings::default() }.validate().is_err());
+        assert_eq!(Settings { speech_model: String::new(), ..Settings::default() }.repair().speech_model, "auto");
     }
 
     #[test]

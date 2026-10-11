@@ -44,7 +44,12 @@ fn save_settings(state: State<App>, settings: Settings) -> Res<Settings> {
     next.notes_consent = current.notes_consent;
     next.last_version = current.last_version.clone();
     state.store.save_settings(&next)?;
+    let new_model = next.speech_model != current.speech_model;
     *current = next.clone(); // saved: memory follows the disk even if pruning fails below
+    drop(current);
+    if new_model {
+        state.tell(Control::SetupDone); // restarts the engine with the chosen model ("Loading the new model…")
+    }
     crate::keyboard::set_talk_key(&next.talk_key);
     if let Err(e) = state.store.prune_history(&next.history_keep) {
         eprintln!("prune history: {e}"); // retried on the next save / launch; the settings themselves are saved
@@ -227,6 +232,13 @@ fn setup_status() -> Value {
         "running": SETTING_UP.load(Ordering::SeqCst),
         "folder": assets::dir().display().to_string(),
         "parts": parts.iter().map(|p| json!({ "id": p, "label": p.label(), "mb": p.approx_mb(), "installed": p.installed() })).collect::<Vec<_>>(),
+        // Settings → Speech model: which choices are downloaded on this PC.
+        "speech_models": {
+            "npu": assets::Part::WhisperNpu.installed() && assets::Part::OpenVino.installed(),
+            "gpu": assets::Part::WhisperGpu.installed(),
+            "turbo": assets::Part::WhisperCpu.installed(),
+            "small": assets::Part::WhisperSmall.installed(),
+        },
     })
 }
 
