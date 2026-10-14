@@ -36,10 +36,12 @@ LIST_EXAMPLES = [
 SENTENCE_END = re.compile(r"(?<=[.?!؟])\s+")
 
 # Backtrack (Wispr Flow's name): the speaker changes their mind mid-sentence and only the final version is kept. The AI
-# runs only when one of these is said, and may only delete words (backtrack_ok).
-_BACKTRACK_EN = ["actually", "no wait", "wait no", "i mean", "scratch that", "sorry i mean", "no no", "make that"]
+# runs only when one of these is said after the first word (a leading "No," / «لا،» is an answer, not a correction),
+# and may only delete words (backtrack_ok).
+_BACKTRACK_EN = ["actually", "no wait", "wait no", "i mean", "scratch that", "sorry i mean", "no no", "make that", "no",
+                 "sorry", "or rather", "rather", "wait"]
 _BACKTRACK_AR = ["لا استنى", "لأ استنى", "لا لا", "قصدي", "أقصد", "اقصد", "لا ثانية", "لا ثواني", "لا مش كده", "بمعنى أصح",
-                 "عفوًا", "عفوا"]
+                 "عفوًا", "عفوا", "لا", "لأ", "لا لحظة", "لحظة", "بل", "خليها", "خليهم", "خليه", "خلها", "خلهم", "خله"]
 
 
 def _phrases(words: list[str]) -> re.Pattern:
@@ -58,6 +60,12 @@ BACKTRACK_EXAMPLES = [
     ("Send the file to Omar, no wait, to Lina.", "Send the file to Lina."),
     ("هبعتلك الملف بكرة، لا استنى، النهاردة بالليل.", "هبعتلك الملف النهاردة بالليل."),
     ("الاجتماع الساعة 4 قصدي الساعة 5 في المكتب.", "الاجتماع الساعة 5 في المكتب."),
+    ("Put the launch on Sunday, no, Monday morning.", "Put the launch on Monday morning."),
+    ("أبغى القهوة بدون سكر، لا لحظة، بسكر خفيف.", "أبغى القهوة بسكر خفيف."),
+    ("الطلب خمسة، لأ خليهم ستة.", "الطلب ستة."),
+    ("أبي كوب واحد، لا، خله كوبين.", "أبي كوبين."),
+    ("التسليم يوم 10، لا 12.", "التسليم يوم 12."),
+    ("No, I don't think we should ship it yet.", "No, I don't think we should ship it yet."),
     ("I actually think the new design is better.", "I actually think the new design is better."),
 ]
 
@@ -193,7 +201,7 @@ class Llm:
 
     def backtrack(self, text: str) -> str:
         """Only the final version of a self-correction ("at 2, actually 3" -> "at 3"); the text unchanged otherwise."""
-        if not BACKTRACK_TRIGGERS.search(text):
+        if not any(m.start() > 0 for m in BACKTRACK_TRIGGERS.finditer(text)):
             return text
         messages = [{"role": "system", "content": BACKTRACK_RULES}]
         for before, after in BACKTRACK_EXAMPLES:

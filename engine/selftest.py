@@ -29,6 +29,7 @@ assert strip_reasoning("<think>a</think>b") == "b" and strip_reasoning("<think>c
 assert BACKTRACK_TRIGGERS.search("let's meet at 2, actually 3") and BACKTRACK_TRIGGERS.search("بكرة، لا استنى، النهاردة")
 assert BACKTRACK_TRIGGERS.search("الساعة 4 قصدي 5") and not BACKTRACK_TRIGGERS.search("send the report tonight")
 assert backtrack_ok("Let's meet at 2, actually 3.", "Let's meet at 3.")
+assert backtrack_ok("Send it to Omar, no, to Lina.", "Send it to Lina.")  # plain "no" mid-sentence
 assert backtrack_ok("هبعتلك الملف بكرة، لا استنى، النهاردة بالليل.", "هبعتلك الملف النهاردة بالليل.")
 assert not backtrack_ok("Let's meet at 2, actually 3.", "Let's meet on Friday at 3.")  # added a word
 assert not backtrack_ok("Let's meet at 2, actually 3.", "Let's meet at 2, actually 3.")  # nothing removed
