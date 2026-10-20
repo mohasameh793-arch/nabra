@@ -44,7 +44,7 @@ fn save_settings(state: State<App>, settings: Settings) -> Res<Settings> {
     next.notes_consent = current.notes_consent;
     next.last_version = current.last_version.clone();
     state.store.save_settings(&next)?;
-    let new_model = next.speech_model != current.speech_model;
+    let new_model = next.speech_model != current.speech_model || next.ai_model != current.ai_model;
     *current = next.clone(); // saved: memory follows the disk even if pruning fails below
     drop(current);
     if new_model {
@@ -460,6 +460,61 @@ fn pill_notes(state: State<App>) {
     state.tell(Control::NotesClicked);
 }
 
+/// Settings → AI model: Nabra's models with how well each fits this PC, models found in Ollama / LM Studio,
+/// and which one is in use.
+#[tauri::command]
+async fn ai_models(state: State<'_, App>) -> Res<Value> {
+    let current = state.settings.lock().unwrap().ai_model.clone();
+    blocking(move || {
+        let (budget, gpu) = crate::ai::budget();
+        let models: Vec<Value> = crate::ai::MODELS.iter().map(|m| json!({
+            "id": m.id, "name": m.name, "size_mb": m.size_mb, "fit": crate::ai::fit(m, budget), "installed": crate::ai::installed(m),
+        })).collect();
+        Ok(json!({ "current": current, "gpu": gpu, "models": models, "external": crate::ai::external(),
+                   "running": sidecar::health().is_some_and(|h| h.llm), "downloading": AI_DOWNLOADING.load(Ordering::SeqCst) }))
+    })
+    .await
+}
+
+static AI_DOWNLOADING: AtomicBool = AtomicBool::new(false);
+
+/// Downloads one of Nabra's models (emitting `ai-progress`), makes it the AI model and restarts the engine with it.
+#[tauri::command]
+async fn download_ai_model(app: AppHandle, id: String) -> Res<()> {
+    if AI_DOWNLOADING.swap(true, Ordering::SeqCst) {
+        return Err("A model is already downloading".into());
+    }
+    let result = blocking({
+        let (app, id) = (app.clone(), id.clone());
+        move || {
+            let mut last = std::time::Instant::now();
+            crate::ai::download(&id, |done, total| {
+                if last.elapsed().as_millis() >= 250 {
+                    last = std::time::Instant::now();
+                    let _ = app.emit("ai-progress", json!({ "id": id, "done": done, "total": total }));
+                }
+            })
+        }
+    })
+    .await;
+    AI_DOWNLOADING.store(false, Ordering::SeqCst);
+    result?;
+    let state = app.state::<App>();
+    let mut s = state.settings.lock().unwrap().clone();
+    s.ai_model = id;
+    state.store.save_settings(&s)?;
+    *state.settings.lock().unwrap() = s;
+    state.tell(Control::SetupDone); // restarts the engine with the new model
+    Ok(())
+}
+
+/// The pill's "No local AI model" offer: open the model picker.
+#[tauri::command]
+fn open_ai_models(app: AppHandle) {
+    app.state::<App>().tell(Control::Dismiss);
+    crate::open_hub(&app, Some("settings:ai"));
+}
+
 #[tauri::command]
 fn open_hub(app: AppHandle, page: Option<String>) {
     crate::open_hub(&app, page.as_deref());
@@ -480,6 +535,9 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         check_updates,
         install_update,
         use_light_model,
+        ai_models,
+        download_ai_model,
+        open_ai_models,
         note_speakers,
         catch_up,
         name_speaker,

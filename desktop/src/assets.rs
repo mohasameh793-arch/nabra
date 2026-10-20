@@ -86,6 +86,9 @@ const PINS: &[(&str, &str, u64)] = &[
     ("Systran/faster-whisper-small/model.bin", "3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671", 483546902),
     ("Systran/faster-whisper-small/tokenizer.json", "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab", 2203239),
     ("Systran/faster-whisper-small/vocabulary.txt", "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913", 459861),
+    ("Qwen/Qwen3-1.7B-GGUF/Qwen3-1.7B-Q8_0.gguf", "061b54daade076b5d3362dac252678d17da8c68f07560be70818cace6590cb1a", 1834426016),
+    ("Qwen/Qwen3-4B-GGUF/Qwen3-4B-Q4_K_M.gguf", "7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5", 2497280256),
+    ("Qwen/Qwen3-14B-GGUF/Qwen3-14B-Q4_K_M.gguf", "500a8806e85ee9c83f3ae08420295592451379b4f8cf2d0f41c15dffeb6b81f0", 9001752960),
     ("Qwen/Qwen3-8B-GGUF/Qwen3-8B-Q4_K_M.gguf", "d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785", 5027783488),
     ("pypi/nvidia-cublas-cu12", "623f43027d40d44ceadf0043f002bd25cf353e8f13ce90b9a87057019f560661", 553162896),
     ("pypi/nvidia-cudnn-cu12", "06e9b0026f3bad97d2b58666330fabec04fe1672f776661ecb0ce0029c27f142", 743068852),
@@ -254,7 +257,7 @@ impl Part {
 /// by downloading 4 GB of GPU files that fall back to a slow CPU run.
 const GPU_MIN_CAP: u32 = 60;
 const GPU_MIN_VRAM_MB: u64 = 3_500;
-const LLM_MIN_CAP: u32 = 75;
+pub const LLM_MIN_CAP: u32 = 75;
 
 /// Turbo on the processor needs a strong one to feel instant; below this Nabra uses the small model.
 const TURBO_MIN_RAM_MB: u64 = 12_000;
@@ -363,7 +366,7 @@ fn get_json(url: &str) -> Result<Value, String> {
 }
 
 /// Files from a Hugging Face repo at a fixed commit, each checked against its pinned SHA-256.
-fn hf_files(repo: &str, rev: &str, wanted: &[&str], into: &Path) -> Result<Vec<Fetch>, String> {
+pub(crate) fn hf_files(repo: &str, rev: &str, wanted: &[&str], into: &Path) -> Result<Vec<Fetch>, String> {
     wanted
         .iter()
         .map(|name| {

@@ -437,3 +437,10 @@ button.chip:hover { background: var(--hover); }
 .people-bar .add-person { width: 110px; padding: 3px 8px; border-radius: 999px; font-size: 12.5px; }
 .transcript li.flash .said { animation: flash 2.4s ease-out; }
 @keyframes flash { 0%, 40% { background: var(--accent-4); } }
+
+/* Settings → AI model: how each model fits this PC */
+.fit { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+.fit-best { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+.fit-light { background: var(--sunk); color: inherit; }
+.fit-heavy { background: color-mix(in srgb, var(--rec) 14%, transparent); color: var(--rec); }
+.settings .muted { color: var(--muted); font-size: 13px; }

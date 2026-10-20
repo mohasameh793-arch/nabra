@@ -142,12 +142,14 @@ def strip_reasoning(text: str) -> str:
 class Llm:
     def __init__(self, base_url: str):
         self.base_url = base_url.rstrip("/")
-        key = os.environ.get("NABRA_LLM_KEY", "")  # llama-server runs with --api-key: only Nabra can use it
+        # A model the user already runs in Ollama or LM Studio (by name); unset = Nabra's own llama-server.
+        self.model = os.environ.get("NABRA_LLM_MODEL", "")
+        key = "" if self.model else os.environ.get("NABRA_LLM_KEY", "")  # llama-server runs with --api-key: only Nabra can use it
         self.http = httpx.Client(headers={"Authorization": f"Bearer {key}"} if key else {})
 
     def ready(self) -> bool:
         try:
-            return self.http.get(f"{self.base_url}/health", timeout=1).status_code == 200
+            return self.http.get(f"{self.base_url}{'/v1/models' if self.model else '/health'}", timeout=1).status_code == 200
         except httpx.HTTPError:
             return False
 
@@ -157,6 +159,7 @@ class Llm:
         r = self.http.post(f"{self.base_url}/v1/chat/completions", timeout=timeout, json={
             "messages": messages, "temperature": 0, "max_tokens": max_tokens,
             "chat_template_kwargs": {"enable_thinking": reasoning},
+            **({"model": self.model} if self.model else {}),
         })
         r.raise_for_status()
         choice = r.json()["choices"][0]
@@ -248,6 +251,21 @@ class Llm:
         ], max_tokens=1500, timeout=120, whole=True)
         quotes = '"“”«»'
         return out.strip() if text.strip()[:1] in quotes else out.strip().strip(quotes)  # keep the user's own quotes
+
+    def compose(self, instruction: str) -> str:
+        """Nothing to edit: the user asked for something new ("write a polite reply saying I'll be late"). Write it,
+        ready to be typed where their cursor is."""
+        out = self.chat([
+            {"role": "system", "content": "The user dictates a request and your reply is typed straight into the app they "
+                                          "are using (an email, a chat, a document, a code editor). Do what they ask: write "
+                                          "the message, text, list or code they want. Write in the language of the request "
+                                          "unless it asks for another one. Reply with only the text to type: no quotes, no "
+                                          "explanations, no greeting to the user."},
+            {"role": "user", "content": "اكتب رد مهذب إني بتأخر ربع ساعة"},
+            {"role": "assistant", "content": "أعتذر، سأتأخر حوالي ربع ساعة. شكراً لتفهمك."},
+            {"role": "user", "content": instruction},
+        ], max_tokens=1500, timeout=120, whole=True)
+        return out.strip().strip('"“”«»')
 
     def catch_up(self, lines: list[dict], me: str = "") -> str:
         """The last few minutes of a live call as 3 short bullets, in the call's own language."""

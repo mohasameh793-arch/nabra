@@ -1,7 +1,7 @@
 // Settings dialog (left nav, sections) and the Help dialog.
-import { $, h, iconBtn, call, state, toast, copyText, LANGUAGES, languageName, languageSelect, getTheme, setTheme } from "./core.js";
+import { $, h, iconBtn, call, listen, state, toast, copyText, LANGUAGES, languageName, languageSelect, getTheme, setTheme } from "./core.js";
 
-const SECTIONS = [["general", "General"], ["languages", "Languages"], ["notes", "Notes"], ["calendar", "Calendar"],
+const SECTIONS = [["general", "General"], ["languages", "Languages"], ["ai", "AI model"], ["notes", "Notes"], ["calendar", "Calendar"],
   ["connections", "Connections"], ["privacy", "Privacy"], ["about", "About"]];
 let section = "general";
 
@@ -148,6 +148,49 @@ async function body() {
             toast("Saved voices forgotten");
           } }, "Forget voices"))];
     }
+    case "ai": {
+      // The local AI behind Right Alt commands, cleanup and summaries. Each of Nabra's models says how it fits this PC.
+      const ai = await call("ai_models");
+      const FIT = { best: ["Best for this PC", "fit-best"], light: ["Light: faster, less smart", "fit-light"],
+        too_heavy: [ai.gpu ? "Too heavy for this PC's graphics card" : "Too heavy for this PC", "fit-heavy"] };
+      const pick = async (id, name) => { await save({ ai_model: id }, `AI model: ${name}. Loading it…`); draw(); };
+      const using = (id) => (s.ai_model || "auto") === id;
+      const row = (m) => {
+        const [fitText, fitClass] = FIT[m.fit];
+        const action = using(m.id) ? h("span", { class: "muted" }, "In use")
+          : m.installed ? h("button", { class: "btn", onclick: () => pick(m.id, m.name) }, "Use")
+          : h("button", { class: "btn primary", disabled: ai.downloading || null, onclick: async (ev) => {
+              ev.target.disabled = true;
+              ev.target.textContent = "Starting…";
+              const stop = await listen("ai-progress", (e) => {
+                if (e.payload.id === m.id) ev.target.textContent = `${Math.floor((100 * e.payload.done) / (e.payload.total || 1))}%`;
+              });
+              try {
+                await call("download_ai_model", { id: m.id });
+                state.settings.ai_model = m.id;
+                toast(`${m.name} is ready. Loading it…`);
+              } catch (err) {
+                toast(String(err));
+              } finally {
+                stop();
+                draw();
+              }
+            } }, `Download ${(m.size_mb / 1024).toFixed(1)} GB`);
+        return h("div", { class: "field" }, h("div", {}, h("b", {}, m.name), h("p", {}, h("span", { class: `fit ${fitClass}` }, fitText))), action);
+      };
+      return [h("h2", {}, "AI model"),
+        h("p", { class: "muted" }, "Runs on this PC. It does what you say when you hold Right Alt (with text selected it edits it, with nothing selected it writes it for you), and cleans up dictation and writes call summaries."),
+        field("Status", null, h("span", {}, ai.running ? "Ready" : "No local AI model running")),
+        field("Automatic", "The strongest downloaded model that fits this PC, else one from Ollama or LM Studio.",
+          using("auto") ? h("span", { class: "muted" }, "In use") : h("button", { class: "btn", onclick: () => pick("auto", "Automatic") }, "Use")),
+        h("h3", {}, "Nabra's models"),
+        ...ai.models.map(row),
+        h("h3", {}, "Already on this PC"),
+        ai.external.length
+          ? ai.external.map((e) => field(e.name, null, using(e.id) ? h("span", { class: "muted" }, "In use")
+              : h("button", { class: "btn", onclick: () => pick(e.id, e.name) }, "Use")))
+          : h("p", { class: "muted" }, "Models you run in Ollama or LM Studio show up here while that app is open.")];
+    }
     case "about": {
       const e = state.boot.engine;
       const models = (await call("setup_status")).speech_models ?? {};
@@ -179,7 +222,7 @@ async function body() {
               await save({ speech_model: v }, `Speech model: ${name}. Loading it…`);
               draw();
             } }, name)))),
-        field("AI cleanup & overviews", "Qwen3 8B, local", h("span", {}, e?.llm ? "Ready" : "Off")),
+        field("AI cleanup & overviews", "Settings → AI model", h("span", {}, e?.llm ? "Ready" : "Off")),
         field("Models", "Speech and AI models downloaded during setup.",
           h("button", { class: "btn", onclick: () => { $("#settings-modal").close(); import("../hub.js").then((m) => m.go("setup")); } }, "Open setup")),
         field("Your data", "Settings, dictionary, history and notes stay in this PC's app data folder.", h("span")),

@@ -89,6 +89,13 @@ function render(v) {
       $("take").hidden = false;
       $("dismiss").hidden = false;
       break;
+    case "noai":
+      $("msg").textContent = "No local AI model available. Click to choose one.";
+      $("take").textContent = "Choose a model";
+      $("take").dataset.action = "ai";
+      $("take").hidden = false;
+      $("dismiss").hidden = false;
+      break;
     case "working":
       $("msg").textContent = v.label;
       break;
@@ -188,9 +195,11 @@ $("chev").addEventListener("click", async () => {
   $("chev").classList.add("open");
   document.body.classList.add("panel-open");
 });
-const TAKE_COMMANDS = { update: "install_update", light: "use_light_model", notes: "pill_notes" };
+const TAKE_COMMANDS = { update: "install_update", light: "use_light_model", notes: "pill_notes", ai: "open_ai_models" };
 $("take").addEventListener("click", () => invoke(TAKE_COMMANDS[$("take").dataset.action] || "pill_notes").catch(() => {}));
 $("dismiss").addEventListener("click", () => invoke("pill_dismiss"));
+// "No local AI model": the message itself is a link to the model picker too.
+$("msg").addEventListener("click", () => $("take").dataset.action === "ai" && !$("take").hidden && invoke("open_ai_models"));
 $("reveal-close").addEventListener("click", () => invoke("pill_dismiss"));
 $("reveal-copy").addEventListener("click", async () => {
   await invoke("copy_text", { text: $("reveal-text").textContent }).catch(() => {});

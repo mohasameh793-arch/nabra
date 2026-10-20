@@ -98,6 +98,9 @@ pub struct Settings {
     pub dialect: String,
     /// Which speech model runs: one of SPEECH_MODELS.
     pub speech_model: String,
+    /// The local AI model (Right Alt commands, cleanup, summaries): "auto", a Nabra model id, or "ollama:<name>" /
+    /// "lmstudio:<name>" (see ai.rs).
+    pub ai_model: String,
     /// Call summary language; None = the call's main language.
     pub summary_language: Option<String>,
     /// "clean" (lexicon + AI cleanup) or "raw" (speech-to-text only).
@@ -158,6 +161,7 @@ impl Default for Settings {
             languages: vec!["ar".into(), "en".into()],
             dialect: "auto".into(),
             speech_model: "auto".into(),
+            ai_model: "auto".into(),
             summary_language: None,
             mode: "clean".into(),
             microphone: None,
@@ -191,6 +195,9 @@ impl Settings {
         }
         if !SPEECH_MODELS.contains(&self.speech_model.as_str()) {
             return Err("Unknown speech model".into());
+        }
+        if !crate::ai::valid_setting(&self.ai_model) {
+            return Err("Unknown AI model".into());
         }
         let s = &self.styles;
         if ![&s.personal, &s.work, &s.email, &s.other].iter().all(|v| ["formal", "casual", "very_casual"].contains(&v.as_str())) {
@@ -226,6 +233,9 @@ impl Settings {
         }
         if !SPEECH_MODELS.contains(&self.speech_model.as_str()) {
             self.speech_model = d.speech_model; // saved before the model picker existed: ""
+        }
+        if !crate::ai::valid_setting(&self.ai_model) {
+            self.ai_model = d.ai_model;
         }
         self
     }

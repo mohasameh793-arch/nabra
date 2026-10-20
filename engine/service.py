@@ -4,7 +4,7 @@ GET  /health                                → {"device": "cuda", "llm": true}
 POST /dictate?langs=ar,en&mode=clean|raw&style=formal|casual|very_casual&dialect=auto|gulf|egyptian|levantine|msa
                                                  WAV → {"text", "raw", "language", "dialect", "fixes", "ms"}
 POST /instruction?langs=ar,en                WAV body → {"instruction", "action"}   (Right Alt voice commands)
-POST /transform {"text", "instruction"}      → {"text"}  (user-requested rewrite / translation)
+POST /transform {"text", "instruction"}      → {"text"}  (user-requested rewrite / translation; empty text = write it new)
 POST /note?langs=ar,en[&partial=1]         WAV body → {"text", "language"}      (calls: no LLM, never stored)
 POST /summary   {"lines": [...], "language": "ar"|null}  → {"summary", "title"}
 POST /voice                                 WAV body → {"voice": [256 floats] | []}   (who is speaking)
@@ -110,6 +110,8 @@ class Engine:
     def transform(self, text: str, instruction: str) -> str:
         if not self.llm:
             raise RuntimeError("local AI model is not available")
+        if not text.strip():  # nothing selected or typed here: a request for new text
+            return self.llm.compose(instruction)
         return self.llm.transform(text, instruction)
 
     def summary(self, lines: list[dict], language: str | None) -> dict:

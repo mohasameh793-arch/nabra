@@ -232,18 +232,29 @@ pub fn start(app: &tauri::AppHandle, opts: Launch) -> Result<(), String> {
     if Part::Cuda.installed() {
         args.extend(["--cuda-dir".into(), assets::cuda().display().to_string()]);
     }
-    if Part::Llama.installed() && Part::Qwen.installed() {
-        let llm_port = free_port(8771);
-        // The key goes in the environment (LLAMA_API_KEY), not the command line other programs can read.
-        let llm = ["-m", &assets::qwen().display().to_string(), "-ngl", "99", "-c", "8192", "--host", "127.0.0.1",
-            "--port", &llm_port.to_string(), "--jinja"];
-        let llama = assets::llama_server();
-        let envs = [("LLAMA_API_KEY", llm_key())];
-        // Local AI is optional: if it can't start, dictation still works without it.
-        match launch(job, &llama, &llm.map(String::from), llama.parent().unwrap(), &logs.join("llama.log"), 0, &envs) {
-            Ok(_) => args.extend(["--llm-url".into(), format!("http://127.0.0.1:{llm_port}")]),
-            Err(e) => crate::log(format!("local AI didn't start: {e}")),
+    // The local AI model: the user's pick in Settings → AI model, else the best one this PC has (ai.rs).
+    let ai_setting = tauri::Manager::state::<crate::App>(app).settings.lock().unwrap().ai_model.clone();
+    let mut external_model = None;
+    match crate::ai::choose(&ai_setting) {
+        Some(crate::ai::Pick::Own { model, gpu }) => {
+            let llm_port = free_port(8771);
+            // The key goes in the environment (LLAMA_API_KEY), not the command line other programs can read.
+            let llm = ["-m", &model.display().to_string(), "-ngl", if gpu { "99" } else { "0" }, "-c", "8192",
+                "--host", "127.0.0.1", "--port", &llm_port.to_string(), "--jinja"];
+            let llama = assets::llama_server();
+            let envs = [("LLAMA_API_KEY", llm_key())];
+            // Local AI is optional: if it can't start, dictation still works without it.
+            match launch(job, &llama, &llm.map(String::from), llama.parent().unwrap(), &logs.join("llama.log"), 0, &envs) {
+                Ok(_) => args.extend(["--llm-url".into(), format!("http://127.0.0.1:{llm_port}")]),
+                Err(e) => crate::log(format!("local AI didn't start: {e}")),
+            }
         }
+        // Ollama / LM Studio: already running, so just point the engine at it (it gets no Nabra key).
+        Some(crate::ai::Pick::External { url, model }) => {
+            args.extend(["--llm-url".into(), url]);
+            external_model = Some(model);
+        }
+        None => {}
     }
     if opts.keep_clips {
         args.extend(["--keep-clips".into(), opts.clips.display().to_string()]);
@@ -251,7 +262,11 @@ pub fn start(app: &tauri::AppHandle, opts: Launch) -> Result<(), String> {
     // Downloaded in the background on first run (see assets::ensure_voice_model); loaded on first use.
     args.extend(["--voice-model".into(), assets::voice_model().display().to_string()]);
     let flags = if Part::WhisperGpu.installed() { 0 } else { BELOW_NORMAL_PRIORITY };
-    let envs = [("NABRA_TOKEN", token()), ("NABRA_LLM_KEY", llm_key())];
+    let external_model = external_model.unwrap_or_default();
+    let mut envs = vec![("NABRA_TOKEN", token()), ("NABRA_LLM_KEY", llm_key())];
+    if !external_model.is_empty() {
+        envs.push(("NABRA_LLM_MODEL", external_model.as_str()));
+    }
     match launch(job, &program, &args, &cwd, &logs.join("engine.log"), flags, &envs) {
         Ok(child) => {
             *ENGINE_CHILD.lock().unwrap() = Some(child);
@@ -307,9 +322,12 @@ pub fn wait_ready(limit: Duration) -> Result<Health, String> {
     }
 }
 
+/// The engine has no local AI model (none downloaded, none in Ollama / LM Studio, or it didn't start).
+pub const NO_AI: &str = "The local AI model isn't running.";
+
 fn explain(e: ureq::Error) -> String {
     match e {
-        ureq::Error::Status(503, _) => "The local AI model isn't running.".into(),
+        ureq::Error::Status(503, _) => NO_AI.into(),
         ureq::Error::Status(code, _) => {
             format!("The speech engine hit an error ({code}). Details: {}", logs_dir().join("engine.log").display())
         }

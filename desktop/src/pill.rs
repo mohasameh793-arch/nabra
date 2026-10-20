@@ -39,6 +39,8 @@ pub enum View {
     Update { version: String },
     /// Autotune: dictation is slow on this PC: offer the light speech model.
     Slow,
+    /// A Right Alt command needs a local AI model and there is none: offer to pick one.
+    NoAi,
     /// A card with an answer: what was playing, a catch-up, or an answer from past calls (`note` + `t` = Open).
     Reveal { title: String, text: String, note: Option<String>, t: f32 },
 }
@@ -52,7 +54,7 @@ impl View {
             View::Hover { .. } => return if dock == "bottom" { (300.0, 190.0) } else { (330.0, 210.0) },
             View::Notes { .. } => return (170.0, 64.0),
             View::Working { .. } => return (300.0, 64.0),
-            View::Result { .. } | View::Problem { .. } | View::Meeting { .. } | View::Update { .. } | View::Slow => {
+            View::Result { .. } | View::Problem { .. } | View::Meeting { .. } | View::Update { .. } | View::Slow | View::NoAi => {
                 return (420.0, 84.0)
             }
             View::Reveal { .. } => return (420.0, 260.0),
@@ -266,7 +268,7 @@ fn size_of_payload(v: &serde_json::Value, dock: &str) -> (f64, f64) {
         "busy" => View::Busy,
         "notes" => View::Notes { seconds: 0 },
         "working" => View::Working { label: String::new() },
-        "result" | "problem" | "meeting" | "update" | "slow" =>View::Problem { message: String::new() },
+        "result" | "problem" | "meeting" | "update" | "slow" | "noai" => View::Problem { message: String::new() },
         "reveal" => View::Reveal { title: String::new(), text: String::new(), note: None, t: 0.0 },
         _ => View::Idle,
     };

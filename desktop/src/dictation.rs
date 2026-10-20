@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VIRTUAL_KEY, VK_BACK, VK_LEFT, VK_RIGHT, VK_RMENU};
 
-use crate::keyboard::{self, talk_key_label, Shortcut, COMMAND_KEY_LABEL, NOTES_KEY_LABEL};
+use crate::keyboard::{self, talk_key_label, Shortcut, NOTES_KEY_LABEL};
 use crate::pill::{self, View};
 use crate::sound::{lift_quiet, wav, Source, Tap};
 use crate::store::Dictation;
@@ -447,7 +447,8 @@ impl Controller {
     }
 
     fn transform(&mut self, take: &Take, instruction: &str, last_here: Option<String>) {
-        // Target: what the user selected; otherwise the last thing Nabra typed in this window.
+        // Target: what the user selected; otherwise the last thing Nabra typed in this window; otherwise nothing,
+        // and the AI writes what was asked ("write a reply saying I'll be late") at the cursor.
         // ponytail: with nothing selected, some editors (VS Code) copy the whole line on Ctrl+C; that line
         // then becomes the target. Select text first for precise edits.
         let mut selected_back = false;
@@ -459,7 +460,7 @@ impl Controller {
                     selected_back = true;
                     text
                 }
-                None => return self.problem(format!("Select some text first, then hold {COMMAND_KEY_LABEL} and say what to do")),
+                None => String::new(),
             },
         };
         self.render(View::Working { label: format!("“{instruction}”") });
@@ -479,6 +480,8 @@ impl Controller {
                 }
                 match failed {
                     Ok(_) => self.problem("The AI returned nothing. Your text is unchanged."),
+                    // No model: offer to pick one (the pill's button opens Settings → AI model).
+                    Err(e) if e == sidecar::NO_AI => self.flash(View::NoAi, UPDATE_PROMPT_FOR),
                     Err(e) => self.problem(e),
                 }
             }
@@ -607,7 +610,7 @@ impl Controller {
                 Ok(Control::Hover(on)) => {
                     self.hovering = on;
                     if self.take.is_none() {
-                        if on && !matches!(self.shown, Some(View::Meeting { .. } | View::Update { .. } | View::Slow | View::Working { .. })) {
+                        if on && !matches!(self.shown, Some(View::Meeting { .. } | View::Update { .. } | View::Slow | View::NoAi | View::Working { .. })) {
                             self.hold_until = None; // hovering dismisses a lingering result (not a meeting prompt)
                         }
                         self.rest();
