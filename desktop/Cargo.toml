@@ -1,6 +1,6 @@
 [package]
 name = "nabra"
-version = "2.1.34"
+version = "2.1.35"
 edition = "2021"
 description = "Local-first Arabic/English voice typing and call notes"
 
