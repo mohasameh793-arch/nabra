@@ -86,7 +86,7 @@ def handle(notes: Notes, msg: dict) -> dict | None:
         return None
     if method == "initialize":
         result = {"protocolVersion": msg.get("params", {}).get("protocolVersion", PROTOCOL),
-                  "capabilities": {"tools": {}}, "serverInfo": {"name": "nabra-notes", "version": "2.1.33"}}
+                  "capabilities": {"tools": {}}, "serverInfo": {"name": "nabra-notes", "version": "2.1.34"}}
     elif method == "ping":
         result = {}
     elif method == "tools/list":
