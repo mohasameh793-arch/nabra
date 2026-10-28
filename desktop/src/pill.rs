@@ -41,6 +41,8 @@ pub enum View {
     Slow,
     /// A Right Alt command needs a local AI model and there is none: offer to pick one.
     NoAi,
+    /// A file is being dragged over the pill: "Leave your file here".
+    DropHere,
     /// A card with an answer: what was playing, a catch-up, or an answer from past calls (`note` + `t` = Open).
     Reveal { title: String, text: String, note: Option<String>, t: f32 },
 }
@@ -53,7 +55,7 @@ impl View {
             View::Listening { .. } | View::Busy => (44.0, 92.0),
             View::Hover { .. } => return if dock == "bottom" { (300.0, 190.0) } else { (330.0, 210.0) },
             View::Notes { .. } => return (170.0, 64.0),
-            View::Working { .. } => return (300.0, 64.0),
+            View::Working { .. } | View::DropHere => return (300.0, 64.0),
             View::Result { .. } | View::Problem { .. } | View::Meeting { .. } | View::Update { .. } | View::Slow | View::NoAi => {
                 return (420.0, 84.0)
             }
@@ -267,7 +269,7 @@ fn size_of_payload(v: &serde_json::Value, dock: &str) -> (f64, f64) {
         "listening" => View::Listening { seconds: 0.0, level: 0.0, hands_free: false, command: false },
         "busy" => View::Busy,
         "notes" => View::Notes { seconds: 0 },
-        "working" => View::Working { label: String::new() },
+        "working" | "drophere" => View::Working { label: String::new() },
         "result" | "problem" | "meeting" | "update" | "slow" | "noai" => View::Problem { message: String::new() },
         "reveal" => View::Reveal { title: String::new(), text: String::new(), note: None, t: 0.0 },
         _ => View::Idle,

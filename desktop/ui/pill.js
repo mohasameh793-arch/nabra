@@ -89,6 +89,9 @@ function render(v) {
       $("take").hidden = false;
       $("dismiss").hidden = false;
       break;
+    case "drophere":
+      $("msg").textContent = "Leave your file here";
+      break;
     case "noai":
       $("msg").textContent = "No local AI model available. Click to choose one.";
       $("take").textContent = "Choose a model";

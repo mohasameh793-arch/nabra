@@ -7,6 +7,7 @@ POST /instruction?langs=ar,en                WAV body → {"instruction", "actio
 POST /transform {"text", "instruction"}      → {"text"}  (user-requested rewrite / translation; empty text = write it new)
 POST /note?langs=ar,en[&partial=1]         WAV body → {"text", "language"}      (calls: no LLM, never stored)
 POST /summary   {"lines": [...], "language": "ar"|null}  → {"summary", "title"}
+POST /file?langs=ar,en {"path"}             → {"paragraphs": [...], "title"}   (a dropped audio/video file)
 POST /voice                                 WAV body → {"voice": [256 floats] | []}   (who is speaking)
 POST /catchup  {"lines": [...]}             → {"text"}   (the last minutes of a call in 3 bullets)
 POST /ask      {"question", "snippets"}     → {"text"}   (answer from past call notes, citing [n])
@@ -29,17 +30,35 @@ from threading import Lock
 from urllib.parse import parse_qs, urlparse
 
 import httpx
+import numpy as np
 
 from lexicon import Lexicon
 from polish import Llm, changed_words, check_edit
 from shortcuts import STYLES, Snippets, apply_style, classify, spoken_breaks
-from speech import MIXED_EXAMPLES, Transcriber
+from speech import MIXED_EXAMPLES, SAMPLE_RATE, Transcriber
 from textnorm import dialect_of, is_arabic
 
 DIALECTS = set(MIXED_EXAMPLES)  # the dialect lock's choices besides "auto"
 from voices import Voices
 
 log = logging.getLogger("nabra.service")
+
+# Files the pill accepts (dropped on it); the app checks the same list.
+MEDIA_FILES = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".opus", ".flac", ".wma",
+               ".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
+
+
+def pieces(audio: np.ndarray, size_s: int = 45, slack_s: int = 5):
+    """Long audio in ~45 s pieces, each cut at the quietest moment near the 45 s mark (not mid-word)."""
+    size, slack, win = size_s * SAMPLE_RATE, slack_s * SAMPLE_RATE, SAMPLE_RATE // 5
+    start = 0
+    while len(audio) - start > size + slack:
+        lo = start + size - slack
+        energy = np.convolve(audio[lo:lo + 2 * slack] ** 2, np.ones(win), "valid")
+        cut = lo + int(np.argmin(energy)) + win // 2
+        yield audio[start:cut]
+        start = cut
+    yield audio[start:]
 
 
 class Engine:
@@ -100,6 +119,30 @@ class Engine:
             raw, language = self.speech.transcribe(wav, langs, self.lexicon.prompt_terms(), beam_size=1 if partial else 5,
                                                    strict=True, detect=not partial, context=context)
         return {"text": self.lexicon.restore(raw) if raw else "", "language": language}
+
+    def transcribe_file(self, path: str, langs: list[str]) -> dict:
+        """An audio or video file dropped on the pill: its speech as paragraphs (about 45 s each, cut at pauses),
+        and a title saying what it's about (the AI's, else its first words)."""
+        from faster_whisper import decode_audio
+
+        src = Path(path)
+        if src.suffix.lower() not in MEDIA_FILES or not src.is_file():
+            raise ValueError("not an audio or video file")
+        audio = decode_audio(str(src), sampling_rate=SAMPLE_RATE)  # the audio track of a video too
+        paragraphs: list[str] = []
+        for piece in pieces(audio):
+            with self.gpu:  # per piece, so dictation can still get a turn during a long file
+                text, _ = self.speech.transcribe(piece, langs, self.lexicon.prompt_terms(), strict=True,
+                                                 context=paragraphs[-1] if paragraphs else "")
+            if text:
+                paragraphs.append(self.lexicon.restore(text))
+        title = ""
+        if self.llm and paragraphs:
+            try:
+                title = self.llm.title(" ".join(paragraphs))
+            except Exception:  # noqa: BLE001 - the title is a nicety; the words matter
+                log.warning("file title failed")
+        return {"paragraphs": paragraphs, "title": title or " ".join(" ".join(paragraphs).split()[:6])}
 
     def instruction(self, wav: bytes, langs: list[str]) -> dict:
         with self.gpu:
@@ -197,7 +240,7 @@ def handler_for(engine: Engine):
                 return self.reply(413, {"error": "too large"})
             body = self.rfile.read(size)
             req = {}
-            if url.path in ("/transform", "/catchup", "/ask", "/summary"):
+            if url.path in ("/transform", "/catchup", "/ask", "/summary", "/file"):
                 try:
                     req = json.loads(body)
                 except ValueError:
@@ -217,6 +260,8 @@ def handler_for(engine: Engine):
                 elif url.path == "/note":
                     self.reply(200, engine.note(body, langs, q.get("partial", ["0"])[0] == "1",
                                                 q.get("context", [""])[0][:400]))
+                elif url.path == "/file":
+                    self.reply(200, engine.transcribe_file(str(req["path"]), langs))
                 elif url.path == "/voice":
                     self.reply(200, {"voice": engine.voices.embed(body)})
                 elif url.path == "/catchup":

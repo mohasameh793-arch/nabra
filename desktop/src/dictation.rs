@@ -43,7 +43,16 @@ pub enum Control {
     Refresh,
     /// A finished background answer (catch-up, ask my meetings) to show on the pill.
     Reveal { title: String, text: String, note: Option<String>, t: f32 },
+    /// A file is dragged over the pill (true) or left / was dropped (false).
+    DropHover(bool),
+    /// An audio or video file was dropped on the pill: transcribe it into a Word document on the Desktop.
+    FileDropped(std::path::PathBuf),
+    /// A background job finished: show this on the pill for a few seconds.
+    Finished(String),
 }
+
+/// What can be dropped on the pill (the engine checks the same list).
+const MEDIA_FILES: [&str; 14] = ["mp3", "wav", "m4a", "aac", "ogg", "opus", "flac", "wma", "mp4", "mov", "mkv", "webm", "avi", "m4v"];
 
 const TOO_SHORT_S: f32 = 0.3;
 const RESULT_FOR: Duration = Duration::from_millis(2600);
@@ -488,6 +497,33 @@ impl Controller {
         }
     }
 
+    /// A dropped audio/video file → its transcript as a Word document on the Desktop, named after what it's about.
+    fn transcribe_file(&mut self, path: std::path::PathBuf) {
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or_default().to_ascii_lowercase();
+        if !MEDIA_FILES.contains(&ext.as_str()) {
+            return self.problem("Drop an audio or video file (MP3, MP4…)");
+        }
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("the file").to_string();
+        self.flash(View::Working { label: format!("Transcribing {name}…") }, Duration::from_secs(4 * 3600));
+        let langs = self.state().settings.lock().unwrap().langs();
+        let app = self.app.clone();
+        std::thread::spawn(move || {
+            let saved = sidecar::transcribe_file(&path, &langs).and_then(|(paragraphs, title)| {
+                if paragraphs.is_empty() {
+                    return Err(format!("No speech found in {name}"));
+                }
+                let doc = crate::docx::free_name(&crate::docx::desktop(), &title);
+                crate::docx::write(&doc, &title, &paragraphs)?;
+                Ok(doc.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_string())
+            });
+            let state = app.state::<App>();
+            match saved {
+                Ok(file) => state.tell(Control::Finished(format!("Saved to your Desktop: {file}"))),
+                Err(e) => state.tell(Control::UpdateFailed(e)),
+            }
+        });
+    }
+
     fn toggle_notes(&mut self) {
         if let Err(e) = crate::toggle_meeting(&self.app) {
             self.problem(e);
@@ -558,6 +594,10 @@ impl Controller {
                 },
                 Ok(Control::Key(Shortcut::CatchUp)) if self.take.is_none() => self.catch_up(),
                 Ok(Control::Reveal { title, text, note, t }) => self.flash(View::Reveal { title, text, note, t }, REVEAL_FOR),
+                Ok(Control::DropHover(true)) if self.take.is_none() => self.flash(View::DropHere, Duration::from_secs(30)),
+                Ok(Control::DropHover(false)) if self.shown == Some(View::DropHere) => self.rest(),
+                Ok(Control::FileDropped(path)) => self.transcribe_file(path),
+                Ok(Control::Finished(text)) => self.flash(View::Result { text, detail: String::new() }, PROBLEM_FOR),
                 // Double-tap Right Ctrl: hands-free. A tap while hands-free types what was said.
                 Ok(Control::Key(Shortcut::TalkPressed)) if self.take.is_none() => {
                     let double = self.tapped.take().is_some_and(|t| t.elapsed() < DOUBLE_TAP);

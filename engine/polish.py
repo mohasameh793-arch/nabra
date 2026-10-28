@@ -301,7 +301,7 @@ class Llm:
         """A short title for a note, in the summary's own language."""
         lang = LANGUAGE_NAMES.get(main_language(summary.splitlines()), "English")
         text = self.chat([
-            {"role": "system", "content": f"Write a 2–6 word title for this call in {lang}. "
+            {"role": "system", "content": f"Write a 2–6 word title for this call or recording in {lang}, saying what it is about. "
                                           "Reply with the title only, no quotes or punctuation at the end."},
             {"role": "user", "content": summary[:3000]},
         ], max_tokens=30)

@@ -38,6 +38,7 @@ MIN_FUZZY_KEY = 4
 # spellings, so they only allow an exact sound match.
 _NEVER_TRANSLITERATED = set("عحخ")
 _RARELY_TRANSLITERATED = set("صضظط")
+_VOWEL_LETTERS = set("اويىآأإ")
 log = logging.getLogger("nabra.lexicon")
 
 
@@ -151,11 +152,14 @@ class Lexicon:
             return None
         # Emphatic letters are rare in spelled-out English: such a word must match a term's sound exactly.
         rare = bool(_RARELY_TRANSLITERATED & set(span))
+        # English spelled in Arabic letters writes its vowels (دوكر، مونقو دي بي); Arabic verbs often have none
+        # (تكتب، تنكتب، تشتغل) and sit one edit from MongoDB / HTML. Such words must match a term's sound exactly.
+        spelled = all(_VOWEL_LETTERS & set(w) for w in span.split())
         best, best_d = None, None
         for e in self._all:
             for k in e.keys:
                 # One edit only when both keys are long: و نكتب ("and we write", nktb) is one edit from MongoDB.
-                budget = 0 if rare or min(len(k), len(key)) <= 4 else 1
+                budget = 0 if rare or not spelled or min(len(k), len(key)) <= 4 else 1
                 if abs(len(k) - len(key)) > budget:
                     continue
                 d = levenshtein(key, k)

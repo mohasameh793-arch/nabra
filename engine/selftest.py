@@ -93,6 +93,9 @@ restores = {
     "نستخدم دوكر و كوبرنيتيس": "نستخدم Docker و Kubernetes",  # a separate و stays a word, not وـ
     "هعمل اكسبورت للملف": "هعمل export للملف",
 }
+# Arabic verbs one edit from a term stay Arabic (they were "MongoDB" / "HTML").
+restores.update({"وكلامك ينكتب وين ما تكتب": "وكلامك ينكتب وين ما تكتب", "وكل كلمة تنكتب صح": "وكل كلمة تنكتب صح",
+                 "تشتغل على جهازك": "تشتغل على جهازك"})
 for src, want in restores.items():
     assert (got := lex.restore(src)) == want, f"{src!r} → {got!r}, want {want!r}"
 # Ordinary Arabic must come out untouched (these all collided with terms in early versions).
@@ -207,5 +210,12 @@ assert classify("delete that paragraph about pricing") == "transform"  # only ex
 assert classify("what did Zaid say about the launch in the meeting?") == "ask"
 assert classify("إيه اللي اتفقنا عليه في الميتنج؟") == "ask" and classify("ask my meetings about pricing") == "ask"
 assert classify("خليها رسمية") == "transform" and classify("قصرها شوية") == "transform"
+
+# Dropped files are cut into ~45 s pieces at the quietest moment, losing no audio.
+import numpy as _np
+from service import SAMPLE_RATE as _SR, pieces as _pieces
+_a = _np.full(_SR * 200, 0.1, dtype="float32"); _a[_SR * 47:_SR * 47 + _SR // 2] = 0
+_ps = list(_pieces(_a))
+assert sum(map(len, _ps)) == len(_a) and abs(len(_ps[0]) / _SR - 47.25) < 0.3
 
 print("engine selftest: all checks passed")

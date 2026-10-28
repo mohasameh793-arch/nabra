@@ -382,6 +382,18 @@ pub fn transform(text: &str, instruction: &str) -> Result<String, String> {
     Ok(v["text"].as_str().unwrap_or_default().into())
 }
 
+/// A dropped audio/video file: its speech as paragraphs and a title saying what it's about. Long files take a while.
+pub fn transcribe_file(path: &std::path::Path, langs: &str) -> Result<(Vec<String>, String), String> {
+    let v: Value = post(&format!("/file?langs={langs}"))
+        .timeout(Duration::from_secs(4 * 3600))
+        .send_json(json!({ "path": path.display().to_string() }))
+        .map_err(explain)?
+        .into_json()
+        .map_err(|e| e.to_string())?;
+    let paragraphs = v["paragraphs"].as_array().into_iter().flatten().filter_map(|p| p.as_str().map(String::from)).collect();
+    Ok((paragraphs, v["title"].as_str().unwrap_or_default().into()))
+}
+
 /// `partial`: live text for a phrase that's still being spoken (fast pass). `context`: the line said just before,
 /// so names and topics carry over between phrases.
 pub fn note_chunk(wav: &[u8], langs: &str, partial: bool, context: &str) -> Result<String, String> {

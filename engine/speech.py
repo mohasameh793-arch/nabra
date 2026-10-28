@@ -190,7 +190,7 @@ class Transcriber:
         phrase is redone with it). context: what was said just before, so names and topics carry over."""
         from faster_whisper import decode_audio
 
-        audio = decode_audio(io.BytesIO(wav), sampling_rate=SAMPLE_RATE)
+        audio = wav if isinstance(wav, np.ndarray) else decode_audio(io.BytesIO(wav), sampling_rate=SAMPLE_RATE)
         if len(audio) < SAMPLE_RATE * 0.3 or np.sqrt(np.mean(audio ** 2)) < SILENCE_RMS:
             return "", None
         # OpenVINO has no separate language check (detection happens inside the decode, then the retries below

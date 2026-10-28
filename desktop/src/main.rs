@@ -7,6 +7,7 @@ mod autostart;
 mod calendar;
 mod commands;
 mod dictation;
+mod docx;
 mod keyboard;
 mod meeting;
 mod pill;
@@ -276,6 +277,19 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(commands::handler())
         .on_window_event(|window, event| {
+            // An audio or video file dragged onto the pill: "Leave your file here", then a transcript on the Desktop.
+            if let (WindowEvent::DragDrop(drop), "pill") = (event, window.label()) {
+                let state = window.state::<App>();
+                match drop {
+                    tauri::DragDropEvent::Enter { .. } => state.tell(Control::DropHover(true)),
+                    tauri::DragDropEvent::Leave => state.tell(Control::DropHover(false)),
+                    tauri::DragDropEvent::Drop { paths, .. } => match paths.first() {
+                        Some(p) => state.tell(Control::FileDropped(p.clone())),
+                        None => state.tell(Control::DropHover(false)),
+                    },
+                    _ => {}
+                }
+            }
             if let WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == "hub" || window.label() == "meeting" {
                     api.prevent_close(); // closing the hub keeps Nabra running in the tray
