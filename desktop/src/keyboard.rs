@@ -26,7 +26,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     KEYEVENTF_UNICODE, VIRTUAL_KEY, VK_CONTROL, VK_MENU, VK_RCONTROL, VK_RETURN, VK_RMENU, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, GetForegroundWindow, GetMessageW, GetWindowTextW, GetWindowThreadProcessId, SetTimer, SetWindowsHookExW,
+    CallNextHookEx, GetForegroundWindow, GetMessageW, GetShellWindow, GetWindowTextW, GetWindowThreadProcessId, SetTimer, SetWindowsHookExW,
     UnhookWindowsHookEx, KBDLLHOOKSTRUCT, LLKHF_INJECTED, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
     WM_TIMER,
 };
@@ -260,6 +260,19 @@ fn focused_is_admin() -> bool {
         let Ok(process) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else { return false };
         // A non-admin can't open an admin process's token: unreadable means elevated (or another user, where
         // the clipboard fallback is still fine).
+        let admin = elevated(process).unwrap_or(true);
+        let _ = CloseHandle(process);
+        admin
+    }
+}
+
+/// Explorer (the Windows shell) runs as admin: true on PCs with UAC turned off, where every app is admin and there
+/// is no normal-user mode to reopen into.
+pub fn shell_is_admin() -> bool {
+    unsafe {
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(GetShellWindow(), Some(&mut pid));
+        let Ok(process) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else { return true };
         let admin = elevated(process).unwrap_or(true);
         let _ = CloseHandle(process);
         admin

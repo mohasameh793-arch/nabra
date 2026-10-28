@@ -8,6 +8,7 @@ mod calendar;
 mod commands;
 mod dictation;
 mod docx;
+mod drop;
 mod keyboard;
 mod meeting;
 mod pill;
@@ -282,16 +283,16 @@ fn elevated() -> bool {
 
 /// Started as administrator (an elevated terminal, or an update installer that inherited admin rights): Windows
 /// then blocks files dragged from Explorer onto the pill, and Nabra can't type into normal apps the same way.
-/// Reopen as the normal user through Explorer and let this copy exit. A marker stops a loop on PCs where
-/// Explorer itself runs as administrator (UAC off).
+/// Reopen as the normal user through Explorer and let this copy exit. Not when Explorer itself runs as administrator
+/// (UAC off): everything is admin there and drops work anyway. A marker stops any other loop.
 fn reopen_unelevated() -> bool {
     let marker = std::env::temp_dir().join("nabra-reopened");
     let recent = std::fs::metadata(&marker).and_then(|m| m.modified()).is_ok_and(|t| t.elapsed().is_ok_and(|d| d.as_secs() < 60));
-    if !elevated() || recent {
+    if !elevated() || recent || keyboard::shell_is_admin() {
         return false;
     }
     let Ok(exe) = std::env::current_exe() else { return false };
-    let _ = std::fs::write(&marker, b"");
+    let _ = std::fs::write(&marker, format!("{:?}", std::time::SystemTime::now())); // new content, so the time updates
     log("started as administrator: reopening as the normal user");
     std::process::Command::new("explorer.exe").arg(exe).spawn().is_ok()
 }
@@ -387,6 +388,7 @@ fn main() {
             let watcher = app.handle().clone();
             std::thread::spawn(move || watch_calendar(watcher));
             pill::init(app.handle());
+            drop::watch(app.handle().clone());
 
             let (keys_tx, keys) = channel();
             let (talk_key, keep) = {
