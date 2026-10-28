@@ -262,8 +262,46 @@ fn listen_for_toggle_notes(app: AppHandle) {
     });
 }
 
+/// True if this process runs as administrator (elevated).
+fn elevated() -> bool {
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    unsafe {
+        let mut token = HANDLE::default();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).is_err() {
+            return false;
+        }
+        let mut e = TOKEN_ELEVATION::default();
+        let mut len = 0;
+        let ok = GetTokenInformation(token, TokenElevation, Some(&mut e as *mut _ as _), size_of::<TOKEN_ELEVATION>() as u32, &mut len);
+        let _ = CloseHandle(token);
+        ok.is_ok() && e.TokenIsElevated != 0
+    }
+}
+
+/// Started as administrator (an elevated terminal, or an update installer that inherited admin rights): Windows
+/// then blocks files dragged from Explorer onto the pill, and Nabra can't type into normal apps the same way.
+/// Reopen as the normal user through Explorer and let this copy exit. A marker stops a loop on PCs where
+/// Explorer itself runs as administrator (UAC off).
+fn reopen_unelevated() -> bool {
+    let marker = std::env::temp_dir().join("nabra-reopened");
+    let recent = std::fs::metadata(&marker).and_then(|m| m.modified()).is_ok_and(|t| t.elapsed().is_ok_and(|d| d.as_secs() < 60));
+    if !elevated() || recent {
+        return false;
+    }
+    let Ok(exe) = std::env::current_exe() else { return false };
+    let _ = std::fs::write(&marker, b"");
+    log("started as administrator: reopening as the normal user");
+    std::process::Command::new("explorer.exe").arg(exe).spawn().is_ok()
+}
+
 fn main() {
     std::panic::set_hook(Box::new(|info| log(format!("CRASH: {info}"))));
+    // Before the single-instance lock, so the reopened copy can take it.
+    if !std::env::args().any(|a| a == "--notes") && reopen_unelevated() {
+        return;
+    }
     if already_running() {
         if std::env::args().any(|a| a == "--notes") {
             signal_toggle_notes();
