@@ -54,7 +54,9 @@ if ($LASTEXITCODE) { throw "Installer build failed" }
 Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY, Env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD -ErrorAction SilentlyContinue
 if (-not (Test-Path dist\Nabra-Setup.exe.sig)) { throw "No updater signature was produced" }
 
-# 4. latest.json: what every installed Nabra checks.
+# 4. latest.json: what every installed Nabra checks. Updates fetch a copy named Nabra-Update.exe, so GitHub's count
+#    for Nabra-Setup.exe is new downloads only (the website's live counter reads it).
+Copy-Item dist\Nabra-Setup.exe dist\Nabra-Update.exe -Force
 $manifest = [ordered]@{
     version  = $Version
     notes    = $(if ($Notes) { $Notes } else { "Nabra $Version" })
@@ -62,7 +64,7 @@ $manifest = [ordered]@{
     platforms = [ordered]@{
         "windows-x86_64" = [ordered]@{
             signature = (Get-Content dist\Nabra-Setup.exe.sig -Raw).Trim()
-            url       = "https://github.com/$Repo/releases/download/v$Version/Nabra-Setup.exe"
+            url       = "https://github.com/$Repo/releases/download/v$Version/Nabra-Update.exe"
         }
     }
 }
@@ -81,7 +83,7 @@ SHA-256 of ``Nabra-Setup.exe``: ``$sha``
 "@
 # Notes go through a file: PowerShell 5.1 splits quoted text when passing it to native programs.
 [IO.File]::WriteAllText("$root\dist\notes.md", $body)
-gh release create "v$Version" dist\Nabra-Setup.exe dist\Nabra-Setup.exe.sha256 dist\latest.json `
+gh release create "v$Version" dist\Nabra-Setup.exe dist\Nabra-Update.exe dist\Nabra-Setup.exe.sha256 dist\latest.json `
     --repo $Repo --target main --title "Nabra $Version" --notes-file dist\notes.md --latest
 Check "gh release create"
 Write-Host "Released v$Version. Installed copies (2.1.4+) offer it within 5 minutes."
